@@ -75,36 +75,59 @@
   pointer-events: none;
 }
 
-.split-guide {
+/* Scissors on the highlighted panel and the dotted line they drag out. */
+.cut-handle {
   position: absolute;
   z-index: 12;
-  pointer-events: none;
-  border: 0 dashed #0d6efd;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 2px solid #0d6efd;
+  border-radius: 50%;
+  background: #fff;
+  color: #0d6efd;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  touch-action: none;
+  user-select: none;
 }
 
-.split-guide.horizontal {
+.cut-handle.horizontal {
+  cursor: ns-resize;
+}
+
+.cut-handle.vertical {
+  cursor: ew-resize;
+}
+
+.cut-handle.dragging {
+  background: #0d6efd;
+  color: #fff;
+}
+
+.cut-handle.invalid {
+  border-color: #dc3545;
+  background: #dc3545;
+}
+
+.cut-line {
+  position: absolute;
+  z-index: 11;
+  pointer-events: none;
+  border: 0 dotted #0d6efd;
+}
+
+.cut-line.horizontal {
   border-top-width: 3px;
 }
 
-.split-guide.vertical {
+.cut-line.vertical {
   border-left-width: 3px;
 }
 
-.split-guide.invalid {
+.cut-line.invalid {
   border-color: #dc3545;
-}
-
-/* A cut across the whole page, extending a little into the margin the cursor is in. */
-.split-guide.across.horizontal {
-  left: -20px;
-  width: calc(100% + 40px);
-  border-top-width: 2px;
-}
-
-.split-guide.across.vertical {
-  top: -20px;
-  height: calc(100% + 40px);
-  border-left-width: 2px;
 }
 
 /* Above panel content, below the selected layer and bubbles (whose handles must win). */
@@ -144,13 +167,10 @@
   background: rgba(13, 110, 253, 0.7);
 }
 
-/* Beside the page a horizontal cut is offered, above or below it a vertical one. */
-.page-area.cut-horizontal {
-  cursor: row-resize;
-}
-
-.page-area.cut-vertical {
-  cursor: col-resize;
+@media (max-width: 767px) {
+  .page-area {
+    padding: 16px;
+  }
 }
 
 /* ---- Layers and bubbles -------------------------------------------------
@@ -342,14 +362,35 @@
 
 /* ---- Editor layout ------------------------------------------------------- */
 
-/* Below the page on mobile, beside it on desktop. */
+/* The panel inspector: a pane on the right on wide screens, a bottom sheet on narrow ones.
+   The sheet's height is set inline (snap points or the live drag); closed, its content is hidden
+   and unfocusable. */
 .inspector {
-  max-height: 40vh;
+  height: 100%;
+  overflow-y: auto;
 }
 
-@media (min-width: 768px) {
-  .inspector {
-    max-height: none;
-    border-left: 1px solid var(--bs-border-color);
+.sheet-body {
+  overflow: hidden;
+  transition:
+    height 0.2s ease,
+    visibility 0s;
+}
+
+.sheet-body.dragging {
+  transition: none;
+}
+
+.sheet-body.closed {
+  visibility: hidden;
+  transition:
+    height 0.2s ease,
+    visibility 0s 0.2s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheet-body,
+  .sheet-body.closed {
+    transition: none;
   }
 }

@@ -94,7 +94,7 @@ export default function BubblesSection({ panel, selection, onSelect, expansion }
   }
 
   return (
-    <section className="mb-3">
+    <section className="mb-3" aria-label="Bubbles">
       <h3 className="h6">Bubbles</h3>
       <div className="btn-group btn-group-sm mb-2">
         {KINDS.map(({ kind, label, sample }) => (

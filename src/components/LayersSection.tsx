@@ -71,7 +71,7 @@ export default function LayersSection({ panel, media, selection, onSelect, expan
   }
 
   return (
-    <section className="mb-3">
+    <section className="mb-3" aria-label="Layers">
       <div className="d-flex justify-content-between align-items-center">
         <h3 className="h6 mb-0">Layers</h3>
         {foreground.length > 0 && (
@@ -91,34 +91,38 @@ export default function LayersSection({ panel, media, selection, onSelect, expan
       <button className="btn btn-outline-secondary btn-sm my-2" onClick={addLayer}>
         Add layer
       </button>
-      {shown.map((layer) => (
-        <LayerRow
-          key={layer.id}
-          panelId={panel.id}
-          layer={layer}
-          media={media}
-          selected={selection.layerId === layer.id}
-          expanded={expansion.isOpen(layer.id)}
-          onSelect={() =>
-            onSelect({
-              panelId: panel.id,
-              layerId: selection.layerId === layer.id ? undefined : layer.id,
-            })
-          }
-          onToggleExpanded={() => expansion.toggle(layer.id)}
-          rowRef={(element) => {
-            if (element) rows.current.set(layer.id, element);
-            else rows.current.delete(layer.id);
-          }}
-          reorder={{
-            begin: () => begin(layer.id),
-            update: (clientY) => update(layer.id, clientY),
-            commit,
-            cancel: () => setDrag(null),
-            dragging: drag?.id === layer.id,
-          }}
-        />
-      ))}
+      {/* Rows keep their place in the DOM while one is dragged (moving it would drop the pointer capture); `order` shows the new sequence. */}
+      <div className="d-flex flex-column">
+        {topFirst.map((layer) => (
+          <div key={layer.id} style={{ order: shown.indexOf(layer) }}>
+            <LayerRow
+              panelId={panel.id}
+              layer={layer}
+              media={media}
+              selected={selection.layerId === layer.id}
+              expanded={expansion.isOpen(layer.id)}
+              onSelect={() =>
+                onSelect({
+                  panelId: panel.id,
+                  layerId: selection.layerId === layer.id ? undefined : layer.id,
+                })
+              }
+              onToggleExpanded={() => expansion.toggle(layer.id)}
+              rowRef={(element) => {
+                if (element) rows.current.set(layer.id, element);
+                else rows.current.delete(layer.id);
+              }}
+              reorder={{
+                begin: () => begin(layer.id),
+                update: (clientY) => update(layer.id, clientY),
+                commit,
+                cancel: () => setDrag(null),
+                dragging: drag?.id === layer.id,
+              }}
+            />
+          </div>
+        ))}
+      </div>
     </section>
   );
 }

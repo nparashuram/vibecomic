@@ -22,7 +22,7 @@ export default function BackgroundSection({ panel, media, selection, onSelect, e
     void task.run(async () => addMediaLayer(panel.id, await getItem(), 'background'));
 
   return (
-    <section className="mb-3">
+    <section className="mb-3" aria-label="Background">
       <h3 className="h6">Background</h3>
       {background ? (
         <LayerRow

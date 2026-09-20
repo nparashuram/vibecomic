@@ -27,3 +27,4 @@ dist-ssr
 *.tsbuildinfo
 src/ai/actions.docs.gen.ts
 public/llms.txt
+public/api.txt

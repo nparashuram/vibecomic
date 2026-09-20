@@ -1,18 +1,21 @@
 import { useMemo, useRef, useState } from 'react';
 import type { CSSProperties, RefObject } from 'react';
 import { cb } from '../ai/actions';
-import { cutAcross, findDividers, moveEdge, rectOf, splitRect } from '../state/layout';
-import type { Axis, Divider, Rect } from '../state/layout';
+import { findDividers, moveEdge, rectOf } from '../state/layout';
+import type { Divider, Rect } from '../state/layout';
 import type { ComicPage, PageSize } from '../types/comic';
 import { usePointerDrag } from '../utils/drag';
 import { pointerPercent } from '../utils/geometry';
 import type { Point } from '../utils/geometry';
+import CutHandle from './CutHandle';
 import PanelView from './PanelView';
 import type { Selection } from './selection';
 
 interface PageEditing {
   selection: Selection;
   onSelect: (selection: Selection) => void;
+  /** A tap (a press that barely moves) anywhere on the page area, including on layers and bubbles. */
+  onTap?: () => void;
 }
 
 interface Props {
@@ -21,32 +24,8 @@ interface Props {
   editing?: PageEditing;
 }
 
-/** Screen pixels a drag must travel before it counts as drawing a line rather than a click. */
-const DRAW_THRESHOLD_PX = 6;
-/** Fractions (in percent) that a cut line snaps to, and how close counts. */
-const SNAP_POINTS = [25, 100 / 3, 50, 200 / 3, 75];
-const SNAP_DISTANCE = 1.5;
-
-/** A cut line across the whole page, drawn while the cursor is beside or above/below the page. */
-interface AcrossGuide {
-  axis: Axis;
-  /** Where the line falls across the page, in percent. */
-  position: number;
-  valid: boolean;
-}
-
-interface Guide {
-  axis: Axis;
-  rect: Rect;
-  /** Where the line falls across the page, in percent. */
-  coordinate: number;
-  valid: boolean;
-}
-
-/** Snap a position to a common fraction, or to one of `extra` (such as existing panel edges). */
-const snapTo = (position: number, extra: number[] = []) =>
-  [...SNAP_POINTS, ...extra].find((point) => Math.abs(point - position) < SNAP_DISTANCE) ??
-  position;
+/** Screen pixels a press may move and still count as a tap. */
+const TAP_SLOP_PX = 6;
 
 const contains = (r: Rect, p: Point) =>
   p.x >= r.x && p.x < r.x + r.width && p.y >= r.y && p.y < r.y + r.height;
@@ -99,103 +78,49 @@ function DividerHandle({ divider, committed, sheetRef, onPreview, onCommit }: Di
  * `editing`, this is the one place everything is edited:
  * - click a panel to highlight it; its layers and bubbles can then be moved
  *   and resized here (and edited in the inspector);
- * - move the cursor beside the page (left or right) for a horizontal cut line
- *   across the whole page, or above or below it for a vertical one, and click;
- * - drag across a single panel to cut just that panel in two;
+ * - the highlighted panel has scissors on its left edge and top edge: drag
+ *   one along the panel and let go over it to cut it (nothing else cuts);
  * - drag the lines between panels to resize them.
  */
 export default function PageSheet({ page, pageSize, editing }: Props) {
   const sheetRef = useRef<HTMLDivElement>(null);
+  const pressStart = useRef<Point | null>(null);
   const [resizePreview, setResizePreview] = useState<Rect[] | null>(null);
-  const [guide, setGuide] = useState<Guide | null>(null);
-  const [acrossGuide, setAcrossGuide] = useState<AcrossGuide | null>(null);
 
   const committed = useMemo(() => page.panels.map(rectOf), [page.panels]);
   const rects = resizePreview ?? committed;
   const dividers = useMemo(() => (editing ? findDividers(rects) : []), [editing, rects]);
 
+  // A click (a press that does not move) highlights the panel under it, or the layer in the highlighted panel.
   const sheetDrag = usePointerDrag<{
     index: number;
-    from: Point;
-    fromClient: Point;
     layerId?: string;
-    cut?: { axis: Axis; position: number; valid: boolean };
+    from: Point;
+    moved: boolean;
   }>({
     start: (event) => {
       if (!editing) return null;
-      const from = pointerPercent(sheetRef.current!, event);
-      const index = rects.findIndex((r) => contains(r, from));
+      const index = rects.findIndex((r) => contains(r, pointerPercent(sheetRef.current!, event)));
       if (index < 0) return null;
       const layerId = (event.target as HTMLElement).closest<HTMLElement>('[data-layer-id]')?.dataset
         .layerId;
-      return { index, from, fromClient: { x: event.clientX, y: event.clientY }, layerId };
+      return { index, layerId, from: { x: event.clientX, y: event.clientY }, moved: false };
     },
     move: (event, state) => {
-      const dx = event.clientX - state.fromClient.x;
-      const dy = event.clientY - state.fromClient.y;
-      if (Math.hypot(dx, dy) < DRAW_THRESHOLD_PX) {
-        state.cut = undefined;
-        setGuide(null);
-        return;
+      if (Math.hypot(event.clientX - state.from.x, event.clientY - state.from.y) > TAP_SLOP_PX) {
+        state.moved = true;
       }
-      const axis: Axis = Math.abs(dx) >= Math.abs(dy) ? 'horizontal' : 'vertical';
-      const at = pointerPercent(sheetRef.current!, event);
-      const rect = rects[state.index];
-      const [start, length, across] =
-        axis === 'horizontal'
-          ? [rect.y, rect.height, (state.from.y + at.y) / 2]
-          : [rect.x, rect.width, (state.from.x + at.x) / 2];
-      const position = snapTo(((across - start) / length) * 100);
-
-      let valid = true;
-      try {
-        splitRect(rect, axis, position);
-      } catch {
-        valid = false;
-      }
-      state.cut = { axis, position, valid };
-      setGuide({ axis, rect, coordinate: start + (length * position) / 100, valid });
     },
     end: (_, state) => {
-      setGuide(null);
+      if (state.moved) return;
       const panel = page.panels[state.index];
-      if (state.cut?.valid) cb().panels.split(panel.id, state.cut.axis, state.cut.position);
-      // A click on a layer inside the already highlighted panel selects that layer.
       const layerId = editing?.selection.panelId === panel.id ? state.layerId : undefined;
       editing?.onSelect({ panelId: panel.id, layerId });
     },
-    cancel: () => setGuide(null),
   });
 
-  /**
-   * The cut line for a cursor outside the page: beside it (left or right) is a
-   * horizontal cut at the cursor's height; above or below it is a vertical cut at
-   * the cursor's x. Null over the page or in the corners.
-   */
-  function acrossCutAt(event: { clientX: number; clientY: number }): AcrossGuide | null {
-    const sheet = sheetRef.current!.getBoundingClientRect();
-    const withinX = event.clientX >= sheet.left && event.clientX <= sheet.right;
-    const withinY = event.clientY >= sheet.top && event.clientY <= sheet.bottom;
-    if (withinX === withinY) return null;
-
-    const axis: Axis = withinY ? 'horizontal' : 'vertical';
-    const at = pointerPercent(sheetRef.current!, event);
-    const edges = rects.flatMap((r) => (withinY ? [r.y, r.y + r.height] : [r.x, r.x + r.width]));
-    const position = snapTo(withinY ? at.y : at.x, edges);
-
-    let valid = true;
-    try {
-      cutAcross(committed, axis, position);
-    } catch {
-      valid = false;
-    }
-    return { axis, position, valid };
-  }
-
-  const insideSheet = (event: { target: EventTarget }) =>
-    sheetRef.current?.contains(event.target as Node) ?? false;
-
   const selection = editing?.selection;
+  const selectedPanel = page.panels.find((panel) => panel.id === selection?.panelId);
   // Paint the highlighted panel last so whatever spills out of it stays visible.
   const paintOrder = page.panels
     .map((panel, i) => ({ panel, i }))
@@ -205,19 +130,23 @@ export default function PageSheet({ page, pageSize, editing }: Props) {
     );
   return (
     <div
-      className={`page-area${acrossGuide ? ` cut-${acrossGuide.axis}` : ''}`}
-      onPointerMove={
+      className="page-area"
+      onPointerDownCapture={
         editing
-          ? (event) => setAcrossGuide(insideSheet(event) ? null : acrossCutAt(event))
+          ? (event) => (pressStart.current = { x: event.clientX, y: event.clientY })
           : undefined
       }
-      onPointerLeave={editing ? () => setAcrossGuide(null) : undefined}
-      onPointerDown={
+      onPointerUpCapture={
         editing
           ? (event) => {
-              if (insideSheet(event)) return;
-              const cut = acrossCutAt(event);
-              if (cut?.valid) cb().panels.splitAcross(cut.axis, cut.position);
+              const start = pressStart.current;
+              pressStart.current = null;
+              const moved = start && Math.hypot(event.clientX - start.x, event.clientY - start.y);
+              // Pressing the scissors is not a tap on the page.
+              const onScissors = (event.target as Element).closest('[data-scissors]');
+              if (moved !== null && moved !== undefined && moved < TAP_SLOP_PX && !onScissors) {
+                editing.onTap?.();
+              }
             }
           : undefined
       }
@@ -260,35 +189,20 @@ export default function PageSheet({ page, pageSize, editing }: Props) {
           );
         })}
 
-        {guide && (
-          <div
-            className={`split-guide ${guide.axis}${guide.valid ? '' : ' invalid'}`}
-            style={
-              guide.axis === 'horizontal'
-                ? {
-                    left: `${guide.rect.x}%`,
-                    width: `${guide.rect.width}%`,
-                    top: `${guide.coordinate}%`,
-                  }
-                : {
-                    top: `${guide.rect.y}%`,
-                    height: `${guide.rect.height}%`,
-                    left: `${guide.coordinate}%`,
-                  }
-            }
-          />
-        )}
-
-        {acrossGuide && (
-          <div
-            className={`split-guide across ${acrossGuide.axis}${acrossGuide.valid ? '' : ' invalid'}`}
-            style={
-              acrossGuide.axis === 'horizontal'
-                ? { top: `${acrossGuide.position}%` }
-                : { left: `${acrossGuide.position}%` }
-            }
-          />
-        )}
+        {editing &&
+          selectedPanel &&
+          (['horizontal', 'vertical'] as const).map((axis) => (
+            <CutHandle
+              key={`${selectedPanel.id}-${axis}`}
+              axis={axis}
+              rect={rects[page.panels.indexOf(selectedPanel)]}
+              sheetRef={sheetRef}
+              onCut={(position) => {
+                cb().panels.split(selectedPanel.id, axis, position);
+                editing.onSelect({ panelId: selectedPanel.id });
+              }}
+            />
+          ))}
 
         {dividers.map((divider) => (
           <DividerHandle

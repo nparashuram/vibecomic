@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
 import { cb } from '../ai/actions';
-import type { ComicPage, MediaItem, PageSize } from '../types/comic';
+import type { ComicPage, MediaItem, PageSize, Panel } from '../types/comic';
 import { formatPageLabel } from '../types/comic';
+import { usePersistentChoice } from '../utils/usePersistentChoice';
+import { useMediaQuery } from '../utils/useViewport';
+import InspectorPane from './InspectorPane';
 import PageSheet from './PageSheet';
+import { SNAPS } from './sheetSnaps';
+import type { Snap } from './sheetSnaps';
 import PanelInspector from './PanelInspector';
 import type { Selection } from './selection';
 
@@ -30,6 +35,12 @@ function PageButtons({
   ));
 }
 
+const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/** What the sheet's handle bar says about the highlighted panel. */
+const panelSummary = (number: number, panel: Panel) =>
+  `Panel ${number} · ${plural(panel.layers.length, 'layer')} · ${plural(panel.bubbles.length, 'bubble')}`;
+
 function AddPageButton({ className }: { className: string }) {
   return (
     <button
@@ -46,6 +57,8 @@ function AddPageButton({ className }: { className: string }) {
 /** Page number rail (left on desktop, footer on mobile), the selected page, and the inspector of its highlighted panel. */
 export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
   const [selection, setSelection] = useState<Selection>({ panelId: null });
+  const wide = useMediaQuery('(min-width: 768px)');
+  const [snap, setSnap] = usePersistentChoice<Snap>('comic-builder:sheet', SNAPS, 'half');
 
   const page = pages[pageIndex];
   const panels = page?.panels ?? [];
@@ -107,10 +120,24 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
                 <PageSheet
                   page={page}
                   pageSize={pageSize}
-                  editing={{ selection: current, onSelect: setSelection }}
+                  editing={{
+                    selection: current,
+                    onSelect: setSelection,
+                    // On a narrow screen a tap on the page dismisses the sheet, to show the art.
+                    onTap: () => {
+                      if (!wide) setSnap('closed');
+                    },
+                  }}
                 />
               </section>
-              <aside className="inspector col-md-4 col-xl-3 bg-white border-top overflow-auto">
+              <InspectorPane
+                wide={wide}
+                snap={snap}
+                onSnapChange={setSnap}
+                summary={
+                  panel ? panelSummary(panels.indexOf(panel) + 1, panel) : 'No panel selected'
+                }
+              >
                 {panel ? (
                   <PanelInspector
                     page={page}
@@ -120,9 +147,9 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
                     onSelect={setSelection}
                   />
                 ) : (
-                  <p className="text-muted p-3 mb-0">No panel selected</p>
+                  <p className="text-muted p-3 mb-0 d-none d-md-block">No panel selected</p>
                 )}
-              </aside>
+              </InspectorPane>
             </>
           ) : (
             <p className="text-muted p-3">No pages yet.</p>

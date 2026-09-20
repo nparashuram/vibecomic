@@ -2,7 +2,7 @@
 
 This is the full design document. The short user-facing overview lives in
 `README.md`. The agent-facing runtime API reference is `ComicBuilder.help()`
-in the browser console and the static copy in `public/llms.txt`.
+in the browser console and the static copy in `public/api.txt`, plus the how-to guide `public/llms.txt`.
 
 ## 1. Architecture
 
@@ -72,9 +72,8 @@ Google Drive API ◄── OAuth token (page memory) ── saveProjectJson()
 
    The selected page is the **only view**: a **page sheet** at the real
    aspect ratio of `metadata.pageSize` (the largest rectangle of that ratio
-   that fits, via container-query units), with the **inspector** (a sidebar
-   on desktop, capped to about 40% of the height below the page on mobile)
-   for the highlighted panel. There are no modes. Every page always has at
+   that fits, via container-query units), with the **inspector** for the
+   highlighted panel (a right-hand pane, or a bottom sheet on narrow screens; see below). There are no modes. Every page always has at
    least one panel, so a new page is a blank sheet. Everything is edited on
    the sheet, and there is no help text.
 
@@ -87,17 +86,24 @@ Google Drive API ◄── OAuth token (page memory) ── saveProjectJson()
      its layers, bubbles and handles paint over every other panel's canvas,
      number and bubbles.
      "Delete panel" removes it (the neighbours stretch over its space).
-   - **Cutting.** Move the cursor beside the page (left or right) and a
-     horizontal cut line follows it across the whole page; move it above or
-     below the page and a vertical line does. Click to cut every panel the
-     line crosses, through `panels.splitAcross`. The line snaps to 25, 33, 50,
-     67 and 75% and to existing panel edges, and is red (and does nothing)
-     when it would cut nothing. Dragging across a single panel cuts only that
-     panel (`panels.split`), and the inspector's "Split evenly" (2/3/4 rows or
-     columns) works on the highlighted panel. The lines between panels are
-     draggable handles: dragging one previews the resize locally and commits on
-     release through `panels.resize`, moving every panel on that line together
-     so the page stays tiled.
+   - **Cutting.** Nothing on the page cuts a panel by accident: clicks,
+     drags and hovering over a panel or its margins do nothing. Only the
+     highlighted panel has two **scissors** (`CutHandle`), each a 30px circle
+     overlapping the panel's edge: a horizontal-facing pair on the **left**
+     edge (cuts into a top and a bottom part) and a vertical-facing pair on the
+     **top** edge (cuts into a left and a right part). Press a pair and drag it
+     along the panel: it follows the pointer with a dotted line across the
+     panel. Let go **over the panel** and it is cut there (`panels.split`,
+     which keeps the original panel highlighted so it can be cut again); let go
+     outside it (past either end, or more than 40px to the side) and nothing
+     happens. The line snaps to 25, 33, 50, 67 and 75% of the panel, and the
+     scissors and line turn red when a drop would not cut (outside the panel, or
+     leaving a part under 5%). A press on the scissors that barely moves does
+     nothing. `panels.splitAcross` and `panels.splitEvenly` remain in the API
+     (the UI has no controls for them). The lines between panels are draggable handles: dragging one
+     previews the resize locally and commits on release through
+     `panels.resize`, moving every panel on that line together so the page
+     stays tiled.
    - **Layers.** A layer is a box on its panel (a background fills the panel
      instead). Selecting a layer, from its row or by clicking it on the page,
      shows four corner handles (resize about the centre, keeping the aspect
@@ -110,15 +116,31 @@ Google Drive API ◄── OAuth token (page memory) ── saveProjectJson()
      opposite corner fixed; the text is scaled to fit) and a blue dot at its
      pointer tip; dragging the body moves it and dragging the dot aims the
      pointer.
+   - **Where the inspector lives.** One inspector is rendered, placed by screen
+     width (`InspectorPane`, a media query at 768px). On a **wide screen** it is
+     a pane on the right of the page (a quarter to a third of the width, full
+     height, always visible). On a **narrow screen** it is a **draggable bottom
+     sheet** under the page (`BottomSheet`) with three heights: closed (only the
+     handle bar), half (40% of the screen, at most 320px) and full (60%, leaving
+     the page a strip above). The handle bar (the only control) shows a grabber
+     and the summary ("Panel 2 · 3 layers · 1 bubble", kept up to date from API
+     calls). Drag it and the sheet follows the finger; on release it settles:
+     pulled past 30% of the way to the next height it moves there, otherwise it
+     springs back. A tap on the handle bar toggles closed and half, and a tap anywhere on the
+     page (a press that barely moves, on a panel, layer or bubble, but not on
+     the scissors) closes the sheet so the whole page shows; drags never
+     close it. The chosen
+     height is remembered per browser (localStorage) and the
+     closed sheet's content is inert (unfocusable). The page area takes whatever
+     room the sheet leaves; crossing the breakpoint swaps the layout in place.
    - **Inspector** (for the highlighted panel), top to bottom: **Bubbles**
      ("+ Speech / Thought / Caption" and a row per bubble), **Layers** (a row
-     per layer, top of the stack first, with a drag handle to reorder, a
+     per layer, top of the stack first, with a ≡ handle to drag it into a new position (the rows stay in place in the DOM and are shown in the new order with CSS `order`, since moving a dragged element would drop its pointer capture), a
      visibility checkbox, a chevron to expand its details, its name to select
      it, and a trash icon; "Expand all / Collapse all"; "Add layer", which adds
      an empty layer, selects and expands it and focuses its prompt so you can
      type what it should show), **Background** ("Set background", which becomes a
-     "Background" row with the same chevron and trash icon), and "Split
-     evenly". Expanded, a layer shows its name, prompt, an "Add image" /
+     "Background" row with the same chevron and trash icon). Expanded, a layer shows its name, prompt, an "Add image" /
      "Change image" button (upload a new image or pick one already in the
      project, with a spinner while it works) and opacity; a bubble shows its text and kind. Position, size and rotation are
      only on the page. Expanding a row and selecting it are independent.
@@ -263,23 +285,32 @@ Semantics:
 parses `src/ai/actions.ts` with the TypeScript compiler API, extracting the
 JSDoc above the `ComicBuilder` literal and every namespace and method (object
 properties, shorthand properties and methods are all handled; `@returns` text
-that starts with `{ … }` is kept verbatim). It emits two artifacts:
+that starts with `{ … }` is kept verbatim). It emits three artifacts:
 
 1. `src/ai/actions.docs.gen.ts` — `ACTION_DOCS`, a path-keyed docs table, and
    `HELP_TEXT`, the rendered reference (gitignored; generated before `tsc`).
-2. `public/llms.txt` — `HELP_TEXT` (the agent guide, conventions, then every
+2. `public/api.txt` — `HELP_TEXT` (the conventions, then every
    namespace/function with description, parameters and return value) plus the
-   data model. It is **deployed with the site**, next to `index.html`.
+   data model: the **API reference**. It is **deployed with the site**, next to
+   `index.html`.
+3. `public/llms.txt` — `scripts/llms-guide.md`, printed verbatim: the
+   **how-to-build-a-comic guide**. It deliberately contains no function
+   names, signatures or code; it points to `api.txt` for those (the JSDoc,
+   including its layout examples, is where API usage lives).
 
-The agent guide (`scripts/agent-guide.md`) is plain Markdown that the extractor
-prints verbatim before the conventions. It tells the agent that it is the
-**orchestrator** (it directs the work and writes prompts for an image generator
-it calls itself; the app never draws), and how to keep **continuity** across
-pages: read the story bible first, copy character/scene/prop descriptions
-verbatim into prompts, create entries and reference art before the first image,
-get reference images (`imageIds`, `media.list`, `media.download`), reuse assets
-by `mediaId`, record every prompt on its layer, keep backgrounds and characters
-as separate layers, then preview and correct.
+The guide is plain Markdown. It tells the agent that it is the
+**orchestrator** (it directs the work and writes prompts for an image
+generator it calls itself; the app never draws), then walks it through the
+build in order: agree the brief and a **visual style** (a STYLE paragraph
+that starts every prompt), build the **story bible** (outline, characters,
+scenes, objects, reference art), plan the pages and panel layouts (pacing,
+camera, room for bubbles), **fill in a prompt for every layer before any
+image exists**, write every prompt from the same parts, generate to spec
+(**foreground layers are transparent PNGs holding only their subject**,
+because they are stacked on other layers; backgrounds are opaque at the
+panel's exact aspect ratio; match lighting, palette and scale), attach and
+compose (reuse assets), letter with bubbles, review and correct, and keep the
+bible current. A continuity checklist closes it.
 
 At runtime, `src/ai/docs.ts` (`attachDocs`) walks the API object and sets a
 non-enumerable `toString()` on every node with its docs, and
@@ -360,7 +391,7 @@ Pattern: cache-first with commit-based update detection.
 `npm run build`:
 
 ```
-node scripts/extract-docs.mjs   # actions.ts -> actions.docs.gen.ts + public/llms.txt
+node scripts/extract-docs.mjs   # actions.ts -> actions.docs.gen.ts + public/api.txt; guide -> public/llms.txt
 tsc -b                          # TypeScript (project references)
 vite build                      # -> dist/
 node scripts/build-meta.mjs     # bundle src/sw.ts -> dist/sw.js; write dist/buildinfo.js
@@ -373,7 +404,7 @@ the tests cover the pure code: panel layout geometry, Drive URL parsing, and
 project validation and normalization). Formatting: Prettier config in `.prettierrc.json` (single quotes, semicolons, 2-space,
 100 col, es5 trailing commas); `npm run format` / `npm run format:check`;
 a Husky pre-commit hook runs `lint-staged` on
-`*.{js,ts,json,css,html,md}`. `src/ai/actions.docs.gen.ts`, `public/llms.txt` and `*.tsbuildinfo` are
+`*.{js,ts,json,css,html,md}`. `src/ai/actions.docs.gen.ts`, `public/llms.txt`, `public/api.txt` and `*.tsbuildinfo` are
 gitignored (generated).
 
 CI (`.github/workflows/ci.yml`): `npm ci`, `npm run format:check`,
@@ -414,8 +445,8 @@ it's drawn comic content, it's custom CSS.
   screens (`SplashScreen`, `ProjectTiles`, `EditorScreen`, `PreviewScreen`),
   editor chrome (`EditorNavbar`, `SaveButton`, `StatusToast`, `DropdownMenu`),
   tabs (`PagesTab`, `OutlineTab`, `StoryTab`, `ReferenceImages`), the page
-  canvas (`PageSheet`, `PanelView`, `LayerBox`, `BubbleView`, `CornerHandle`,
-  `bubbleShape.ts`) and the inspector (`PanelInspector`, `BubblesSection`,
+  canvas (`PageSheet`, `CutHandle`, `PanelView`, `LayerBox`, `BubbleView`, `CornerHandle`,
+  `bubbleShape.ts`) and the inspector (`InspectorPane`, `BottomSheet`, `PanelInspector`, `BubblesSection`,
   `LayersSection`, `BackgroundSection`, `LayerRow`, `LayerDetails`,
   `MediaPicker`, `RowButtons`). Small hooks and helpers live beside them
   (`useTask`, `useExpansion`, `useDriveImage`, `panelActions`, `selection`).

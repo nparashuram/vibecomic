@@ -6,7 +6,8 @@
  * `ComicBuilder` literal below is the single source of truth for the docs:
  * scripts/extract-docs.mjs turns it into src/ai/actions.docs.gen.ts (attached
  * as each node's toString() and rendered by ComicBuilder.help()) and
- * public/llms.txt.
+ * public/api.txt (the static API reference; public/llms.txt is the separate
+ * how-to-build-a-comic guide, scripts/llms-guide.md).
  */
 
 import type { DeviceCodeInfo, ProjectFolder } from '../drive/driveClient';

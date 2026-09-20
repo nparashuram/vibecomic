@@ -3,7 +3,9 @@
  * and generate:
  *   - src/ai/actions.docs.gen.ts: ACTION_DOCS (dotted path -> doc string, used
  *     for per-node toString()) and HELP_TEXT (returned by ComicBuilder.help()).
- *   - public/llms.txt: HELP_TEXT plus the data model, for AI agents.
+ *   - public/api.txt: HELP_TEXT plus the data model: the API reference for AI agents.
+ *   - public/llms.txt: scripts/llms-guide.md, the step-by-step guide to building
+ *     a comic (no API details; it points to api.txt).
  *
  * Run before tsc/vite: `node scripts/extract-docs.mjs`. Exits 1 when the source
  * cannot be parsed so the docs never go silently stale; nodes without JSDoc are
@@ -18,6 +20,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ACTIONS_TS = path.join(ROOT, 'src', 'ai', 'actions.ts');
 const GEN_TS = path.join(ROOT, 'src', 'ai', 'actions.docs.gen.ts');
 const LLMS_TXT = path.join(ROOT, 'public', 'llms.txt');
+const API_TXT = path.join(ROOT, 'public', 'api.txt');
 const ROOT_NAME = 'ComicBuilder';
 
 const ts = createRequire(path.join(ROOT, 'package.json'))('typescript');
@@ -66,8 +69,16 @@ const CONVENTIONS = [
   '  image URLs.',
 ];
 
-/** The orchestrator role and continuity guidance, kept as plain Markdown. */
-const AGENT_GUIDE = fs.readFileSync(path.join(ROOT, 'scripts', 'agent-guide.md'), 'utf8').trim();
+/** How to build a comic (workflow, style, continuity), kept as plain Markdown. */
+const LLMS_GUIDE = fs.readFileSync(path.join(ROOT, 'scripts', 'llms-guide.md'), 'utf8').trim();
+
+const SERVED_FILES = [
+  '## Files served next to the app',
+  '',
+  '- `llms.txt`: this guide',
+  '- `api.txt`: the API reference (also `ComicBuilder.help()` in the running app)',
+  '- `schema/comic-project.schema.json`: JSON Schema of the project model',
+];
 
 const PAGE_SIZE_PRESET_LINES = readPageSizePresets();
 
@@ -87,11 +98,6 @@ const DATA_MODEL = [
   '- `MediaItem`: `{ id, name, driveFileId, url, mimeType }`',
   '',
   'Machine-readable schema: `schema/comic-project.schema.json` (JSON Schema, draft 2020-12).',
-  '',
-  '## Files served next to the app',
-  '',
-  '- `llms.txt`: this file',
-  '- `schema/comic-project.schema.json`: JSON Schema of the project model',
 ];
 
 /** The page size presets, read from src/types/comic.ts so they cannot drift. */
@@ -225,8 +231,8 @@ function renderReference({ docs, functions }) {
     'The app exposes this API on `window.ComicBuilder` once it has loaded.',
     'Every UI control calls the same functions: one code path, no drift.',
     'In the browser console (or via automation), start with `ComicBuilder.help()`.',
-    '',
-    AGENT_GUIDE,
+    'This is the API reference. How to build a comic (workflow, visual style, image',
+    'formats, continuity) is in `llms.txt`, served next to the app: read it first.',
     '',
     '## Conventions — read before acting',
     '',
@@ -274,9 +280,11 @@ function main() {
       `export const ACTION_DOCS: Record<string, string> = ${JSON.stringify(Object.fromEntries(collected.docs), null, 2)};\n\n` +
       `export const HELP_TEXT = ${JSON.stringify(reference)};\n`
   );
-  fs.writeFileSync(LLMS_TXT, `${reference}\n\n${DATA_MODEL.join('\n')}\n`);
+  fs.writeFileSync(API_TXT, `${reference}\n\n${DATA_MODEL.join('\n')}\n`);
+  fs.writeFileSync(LLMS_TXT, `${LLMS_GUIDE}\n\n${SERVED_FILES.join('\n')}\n`);
+  const shown = (file) => path.relative(ROOT, file);
   console.log(
-    `extract-docs: wrote ${collected.docs.size} entries to ${path.relative(ROOT, GEN_TS)} and ${path.relative(ROOT, LLMS_TXT)}`
+    `extract-docs: wrote ${collected.docs.size} entries to ${shown(GEN_TS)}, ${shown(API_TXT)} and ${shown(LLMS_TXT)}`
   );
 }
 
