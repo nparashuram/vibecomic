@@ -10,6 +10,13 @@ export default function SplashScreen({ deviceCode }: { deviceCode: DeviceCodeInf
     <div className="min-vh-100 d-flex align-items-center justify-content-center bg-light p-3">
       <div className="card shadow" style={{ maxWidth: 540, width: '100%' }}>
         <div className="card-body p-4">
+          <img
+            src={`${import.meta.env.BASE_URL}logo.png`}
+            alt=""
+            width={64}
+            height={64}
+            className="mb-3"
+          />
           <h1 className="card-title h4 mb-3">Connect to Google Drive</h1>
           <p className="card-text">
             Comic Builder keeps your comic — its pages, artwork, and project file — on your Google
@@ -83,6 +90,15 @@ export default function SplashScreen({ deviceCode }: { deviceCode: DeviceCodeInf
               </p>
             </div>
           )}
+          <p className="text-center text-muted small mt-4 mb-0">
+            <a href={`${import.meta.env.BASE_URL}pages/privacy.html`}>Privacy Policy</a>
+            {' · '}
+            <a href={`${import.meta.env.BASE_URL}pages/tos.html`}>Terms of Service</a>
+            {' · '}
+            <a href="https://github.com/nparashuram/vibecomic/" target="_blank" rel="noreferrer">
+              GitHub
+            </a>
+          </p>
         </div>
       </div>
     </div>

@@ -19,6 +19,11 @@ an existing project folder or create a new one. Changes are saved to Drive
 automatically every minute (only when something changed), or immediately with the
 floppy-disk button in the navbar.
 
+The app's [privacy policy](public/pages/privacy.html) and
+[terms of service](public/pages/tos.html) are plain, self-contained HTML pages,
+served at `/pages/privacy.html` and `/pages/tos.html`. The logo is
+`public/favicon.svg` (the tab icon) and `public/logo.png` (1024 px).
+
 ## Google Drive setup
 
 The app talks to Drive through OAuth 2.0 entirely client-side. You need two
@@ -37,7 +42,7 @@ for headless browsers and AI assistants.
 2. Click ["Create Credentials" > "OAuth client ID"](https://console.cloud.google.com/auth/clients/create)
 3. Select **Web application** as the application type
 4. Under "Authorized JavaScript origins", add:
-   - `http://localhost:5173` for local development
+   - `http://localhost:8080` for local development
    - `https://<your-username>.github.io` for your deployed site
    - (Add any other origins where you'll run the app)
 5. **No redirect URIs or client secret needed** for the web client

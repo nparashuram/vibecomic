@@ -19,6 +19,8 @@ export default () => {
     // Relative asset URLs: the site works from any path (a GitHub Pages project
     // site, a custom domain, a sub-folder) without knowing where it is hosted.
     base: './',
+    // Fixed, because the Google OAuth client lists http://localhost:8080 as an authorized origin.
+    server: { port: 8080, strictPort: true },
     plugins: [react()],
     define: {
       // Injected as bare globals; declared in src/globals.d.ts.
