@@ -117,6 +117,10 @@
           },
           "type": "array"
         },
+        "prompt": {
+          "description": "The intent of the whole page: what happens, its mood and pacing. Stitched, first, into the prompt for every layer's image on the page.",
+          "type": "string"
+        },
         "title": {
           "type": "string"
         }
@@ -151,7 +155,7 @@
           "type": "number"
         },
         "prompt": {
-          "description": "What the art shows: the prompt an image model is given, or a plain description.",
+          "description": "What this layer's art shows: its own part of the image prompt, or a plain description. The page prompt, the panel prompt and the story bible supply the rest.",
           "type": "string"
         },
         "rotation": {
@@ -236,6 +240,10 @@
             "$ref": "#/$defs/Layer"
           },
           "type": "array"
+        },
+        "prompt": {
+          "description": "The intent of the panel: what it shows and why (moment, camera, mood). Stitched after the page prompt and before each layer's prompt into the prompt for every layer's image in the panel.",
+          "type": "string"
         },
         "title": {
           "description": "Optional panel title.",

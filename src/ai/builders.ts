@@ -67,6 +67,11 @@ export function assertKind<T extends string>(
   );
 }
 
+/** A title or prompt must be text: anything else would make the saved project fail to load. */
+export function assertOptionalText(value: unknown, label: string): void {
+  if (value !== undefined && typeof value !== 'string') throw new Error(`${label} must be text.`);
+}
+
 function removeById(list: Array<{ id: string }>, id: string): boolean {
   const index = list.findIndex((item) => item.id === id);
   if (index >= 0) list.splice(index, 1);
@@ -301,12 +306,18 @@ export function panelsApi(deps: ComicBuilderDeps) {
         })
       );
     },
-    update: (panelId: string, patch: { title?: string }): Panel =>
-      snapshot(
+    update: (panelId: string, patch: { title?: string; prompt?: string }): Panel => {
+      assertOptionalText(patch.title, 'title');
+      assertOptionalText(patch.prompt, 'prompt');
+      return snapshot(
         mutate(deps, (p) =>
-          Object.assign(requirePanel(p, panelId), definedFields({ title: patch.title }))
+          Object.assign(
+            requirePanel(p, panelId),
+            definedFields({ title: patch.title, prompt: patch.prompt })
+          )
         )
-      ),
+      );
+    },
     delete: (panelId: string): boolean =>
       mutate(deps, (p) => {
         const page = pageOfPanel(p, panelId);

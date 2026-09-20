@@ -94,6 +94,7 @@ function checkStoryEntry(value: unknown, path: string, linkField: string): void 
 function checkPage(value: unknown, path: string): void {
   const page = expectRecord(value, path);
   expectStrings(page, path, ['id', 'title']);
+  optionalString(page, path, 'prompt');
   if (!Number.isInteger(page.number) || (page.number as number) < 0) {
     fail(path, '"number" must be a non-negative integer');
   }
@@ -106,6 +107,7 @@ function checkPanel(value: unknown, path: string): void {
   const panel = expectRecord(value, path);
   expectStrings(panel, path, ['id']);
   optionalString(panel, path, 'title');
+  optionalString(panel, path, 'prompt');
   checkPanelRect(panel, path);
   expectArray(panel.layers, path, 'layers').forEach((layer, i) =>
     checkLayer(layer, `${path}.layers[${i}]`)

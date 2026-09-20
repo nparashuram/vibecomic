@@ -164,10 +164,13 @@ function readObject(
   flags: ParsedArgv['flags'],
   cwd: string
 ): Record<string, unknown> {
-  const object = (raw === undefined ? {} : convert(param, param.name, raw, cwd)) as Record<
-    string,
-    unknown
-  >;
+  const given = raw === undefined ? {} : convert(param, param.name, raw, cwd);
+  if (typeof given !== 'object' || given === null || Array.isArray(given)) {
+    throw new UsageError(
+      `${param.name} must be a JSON object, like {"${param.fields![0].name}": ...}.`
+    );
+  }
+  const object = given as Record<string, unknown>;
   for (const field of param.fields!) {
     const given = flags.get(flagOf(field));
     if (given === undefined) continue;

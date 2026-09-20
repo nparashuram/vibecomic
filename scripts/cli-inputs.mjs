@@ -36,6 +36,8 @@
  */
 export const POSITIONAL = {
   'media.upload': ['dataUrl'],
+  // `page update 2 --prompt "..."`: the page index first, the fields as flags.
+  'page.update': ['pageIndex'],
 };
 
 const PANEL_ID = { type: 'string', example: 'panel_ab12cd' };
@@ -64,6 +66,22 @@ const STORY_ENTRY = {
   delete: { id: { type: 'string', example: 'character_ab12cd' } },
 };
 
+/** A page's or panel's intent, stitched into the prompt of the images below it. */
+const PAGE_PROMPT = {
+  type: 'string',
+  optional: true,
+  allowEmpty: true,
+  help: "The page's intent: what happens on it, its mood and pacing. An empty value clears it.",
+  example: 'The chase ends: Mara corners the thief on the rooftop at dusk; tense, fast, few words.',
+};
+const PANEL_PROMPT = {
+  type: 'string',
+  optional: true,
+  allowEmpty: true,
+  help: "The panel's intent: its moment, camera and mood. An empty value clears it.",
+  example: 'Low angle, wide: the thief has nowhere left to run.',
+};
+
 const PAGE_SIZE = {
   type: 'json',
   example: '{ "label": "US Comic", "widthIn": 6.625, "heightIn": 10.25 }',
@@ -85,8 +103,21 @@ export const INPUTS = {
     input: {
       type: 'object',
       optional: true,
-      fields: { title: { type: 'string', optional: true, help: 'The page title.' } },
+      fields: {
+        title: { type: 'string', optional: true, help: 'The page title.' },
+        prompt: PAGE_PROMPT,
+      },
     },
+  },
+  'page.update': {
+    patch: {
+      type: 'object',
+      fields: {
+        title: { type: 'string', optional: true, help: 'The new page title.' },
+        prompt: PAGE_PROMPT,
+      },
+    },
+    pageIndex: { type: 'number', optional: true, example: '2' },
   },
 
   'panels.list': { pageIndex: { type: 'number', optional: true, example: '0' } },
@@ -112,7 +143,10 @@ export const INPUTS = {
     panelId: PANEL_ID,
     patch: {
       type: 'object',
-      fields: { title: { type: 'string', optional: true, help: 'The new panel title.' } },
+      fields: {
+        title: { type: 'string', optional: true, help: 'The new panel title.' },
+        prompt: PANEL_PROMPT,
+      },
     },
   },
   'panels.delete': { panelId: PANEL_ID },

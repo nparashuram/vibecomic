@@ -440,3 +440,77 @@ test('the rest of the API works through the command line', async () => {
   await run('storage', 'disconnect');
   assert.equal((await run('storage', 'status')).json().connected, false);
 });
+
+test('pages and panels have prompts, through the CLI', async () => {
+  const { run, login, google } = setup();
+  await login();
+  const { id: folderId } = (await run('storage', 'createProject', 'Intents')).json();
+  const saved = () => google.projectIn(folderId);
+
+  // A page created with a prompt; the cover page has none.
+  const page = (
+    await run('page', 'add', '--title', 'Chase', '--prompt', 'Rooftop chase, dusk.')
+  ).json();
+  assert.equal(page.prompt, 'Rooftop chase, dusk.');
+  assert.equal(saved().pages[0].prompt, undefined);
+  assert.equal(saved().pages[1].prompt, 'Rooftop chase, dusk.');
+
+  // page update: the index is positional, the fields are flags; without an index it is the current page.
+  const updated = (
+    await run('page', 'update', '1', '--prompt', 'The chase ends on the roof.')
+  ).json();
+  assert.equal(updated.prompt, 'The chase ends on the roof.');
+  assert.equal(updated.title, 'Chase'); // only the given fields change
+  assert.equal(
+    (await run('page', 'update', '--title', 'Chase, part 2')).json().prompt,
+    'The chase ends on the roof.'
+  );
+  assert.equal(saved().pages[1].title, 'Chase, part 2');
+  await run('page', 'update', '0', '--prompt', 'The cover: the city at dusk.');
+  assert.equal(saved().pages[0].prompt, 'The cover: the city at dusk.');
+  assert.equal((await run('page', 'select', '1')).json().prompt, 'The chase ends on the roof.');
+
+  // panels: a prompt via a flag or via JSON; a cut keeps it on the original and starts the new one empty
+  const panelId = page.panels[0].id;
+  assert.equal(
+    (await run('panels', 'update', panelId, '--prompt', 'Wide, low angle.')).json().prompt,
+    'Wide, low angle.'
+  );
+  assert.equal(
+    (
+      await run('panels', 'update', panelId, '{"title":"Roof","prompt":"Wide, low angle, dusk."}')
+    ).json().title,
+    'Roof'
+  );
+  const [kept, fresh] = (await run('panels', 'split', panelId, 'vertical', '50')).json();
+  assert.equal(kept.prompt, 'Wide, low angle, dusk.');
+  assert.equal(fresh.prompt, undefined);
+  assert.equal((await run('panels', 'get', panelId)).json().prompt, 'Wide, low angle, dusk.');
+  assert.equal(saved().pages[1].panels[0].prompt, 'Wide, low angle, dusk.');
+
+  // An empty value clears it, and reads back as empty text
+  assert.equal((await run('panels', 'update', panelId, '--prompt', '')).json().prompt, '');
+  assert.equal((await run('page', 'update', '1', '--prompt', '')).json().prompt, '');
+
+  // Mistakes
+  assert.match((await run('page', 'update', '9', '--prompt', 'x')).err, /Page 9 not found/);
+  assert.match((await run('page', 'update', '-1', '--prompt', 'x')).err, /Page -1 not found/);
+  assert.match((await run('panels', 'update', panelId, '{"prompt":5}')).err, /prompt must be text/);
+  assert.match((await run('panels', 'update', panelId, '5')).err, /patch must be a JSON object/);
+  assert.match(
+    (await run('page', 'update', 'first', '--prompt', 'x')).err,
+    /"first" is not a number/
+  );
+  assert.equal((await run('panels', 'update', 'no-such-panel', '--prompt', 'x')).code, 1);
+
+  // The prompt is written down where the LLM can read it back next to the layer's own
+  const layer = (
+    await run('layers', 'add', fresh.id, '{"kind":"background","prompt":"Rooftop"}')
+  ).json();
+  const read = (await run('page', 'select', '1')).json();
+  assert.equal(read.panels[1].layers[0].id, layer.id);
+  assert.equal(read.panels[1].layers[0].prompt, 'Rooftop');
+
+  // Everything survives a reload from Drive, as a fresh process reads it
+  assert.equal((await run('page', 'current')).json().panels[0].prompt, '');
+});

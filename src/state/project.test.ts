@@ -106,3 +106,33 @@ test('a media item may carry a thumbnail Drive file id, which must be a string',
   (project.metadata.media[0] as unknown as Record<string, unknown>).thumbnailDriveFileId = 5;
   assert.throws(() => assertValidProject(project), /thumbnailDriveFileId/);
 });
+
+test('pages and panels may have a prompt, which must be text', () => {
+  const project = createBlankProject('Test');
+  assertValidProject(project); // no prompt at all is fine (older projects)
+
+  project.pages[0].prompt = 'The chase ends on the rooftop.';
+  project.pages[0].panels[0].prompt = 'Low angle: nowhere left to run.';
+  assertValidProject(project);
+  project.pages[0].prompt = '';
+  assertValidProject(project);
+
+  const badPage = structuredClone(project) as unknown as { pages: Array<{ prompt: unknown }> };
+  badPage.pages[0].prompt = 3;
+  assert.throws(() => assertValidProject(badPage), /project\.pages\[0\].*prompt/);
+
+  const badPanel = structuredClone(project) as unknown as {
+    pages: Array<{ panels: Array<{ prompt: unknown }> }>;
+  };
+  badPanel.pages[0].panels[0].prompt = { text: 'no' };
+  assert.throws(() => assertValidProject(badPanel), /project\.pages\[0\]\.panels\[0\].*prompt/);
+});
+
+test('page and panel prompts survive normalization', () => {
+  const project = createBlankProject('Test');
+  project.pages[0].prompt = 'Page intent';
+  project.pages[0].panels[0].prompt = 'Panel intent';
+  normalizeProject(project);
+  assert.equal(project.pages[0].prompt, 'Page intent');
+  assert.equal(project.pages[0].panels[0].prompt, 'Panel intent');
+});

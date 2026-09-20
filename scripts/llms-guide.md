@@ -130,35 +130,57 @@ Every new page starts as one blank panel that you then cut up into the layout.
 Choose the page size first (the standard comic sizes are in the API
 reference); it decides every image's proportions.
 
-### 4. Fill in a prompt for every layer, before any image
+### 4. Write the prompts for every page, panel and layer, before any image
 
-Build the whole comic as **prompts first**. For each panel, add the layers it
-needs and write the prompt in each one while its image slot is still empty:
+Build the whole comic as **prompts first**, at three levels. Each level says
+only what belongs to it, so the parts add up when they are stitched together
+(step 5) without repeating or contradicting each other:
 
-- one **background** layer: the setting, at the bottom of the stack, filling
-  the panel;
-- one **foreground** layer per character or prop that appears, so each can be
-  moved, resized and reused separately (see step 6);
-- give each layer a clear name ("Mara, running", "Lab background").
+- **The page prompt:** the intent of the whole page. What happens on it (the
+  beats from step 3), its mood and pacing, how the panels flow. Set it when you
+  add the page, or later.
+- **The panel prompt:** the intent of one panel. The moment it shows, the
+  camera (shot and angle), the mood, what it must get across, where the words
+  will go.
+- **The layer prompts:** for each panel, add the layers it needs and write the
+  prompt in each one while its image slot is still empty:
+  - one **background** layer: the setting, at the bottom of the stack, filling
+    the panel;
+  - one **foreground** layer per character or prop that appears, so each can be
+    moved, resized and reused separately (see step 6);
+  - give each layer a clear name ("Mara, running", "Lab background");
+  - a layer prompt is about that one image: the pose, action, expression and
+    gaze of the character, or the look of the background. The setting and the
+    character descriptions are not repeated here: they come from the story
+    bible.
 
-The prompt on the layer is the record of how that image is asked for. The user
-can open the page in the editor and read your plan (each empty layer shows its
-prompt), so this is also where they can correct you cheaply, before any image
-has been generated. Fix the plan, then start generating.
+These prompts are the record of how every image is asked for. The user can open
+the page in the editor and read your plan (the page and panel prompts are boxes
+in the inspector, and each empty layer shows its prompt), so this is also where
+they can correct you cheaply, before any image has been generated. Fix the
+plan, then start generating.
 
-### 5. Write each prompt the same way
+### 5. Stitch the prompt for each image the same way
 
-Build every prompt from the same parts, in this order:
+The prompt you give the generator for a layer (a background too) is **built
+from the stored parts**, in this order, never written from scratch:
 
 1. The **STYLE paragraph**, verbatim.
-2. The **scene description** from the bible, verbatim.
-3. Each **character's and object's description**, verbatim, for everything in
+2. The **page prompt** of the page it is on, verbatim.
+3. The **panel prompt** of the panel it is in, verbatim.
+4. The **scene description** from the bible, verbatim.
+5. Each **character's and object's description**, verbatim, for everything in
    this image (do not paraphrase; a reworded description is a different
    character).
-4. **What happens:** pose, action, expression, gaze, camera angle and framing.
-5. The **technical requirements** for the image kind (next section), including
+6. The **layer prompt**: what this image shows (pose, action, expression, gaze,
+   framing).
+7. The **technical requirements** for the image kind (next section), including
    the exact size or aspect ratio the app gives you for that layer.
 
+Read the parts back from the project when you generate (the page, its panels
+with their prompts, the layer, the characters) instead of trusting your memory:
+that is what keeps a hundred images consistent, and it means fixing a page
+prompt or a character description fixes every image you stitch from it after.
 If the generator accepts reference images, attach the character's reference art
 to every image of that character. If it cannot, rely on the verbatim
 description.
@@ -267,9 +289,11 @@ to look at a page and tell you what is wrong. Check:
   correctly.
 - **Flow:** the panels read in the intended order and the camera varies.
 
-Fix problems at the source: tighten the prompt (quote the description more
-exactly, attach the reference), regenerate that one image, and swap it in. Then
-update the prompt on the layer so it records what actually produced the image.
+Fix problems at the source: tighten the part of the prompt that caused it (the
+layer prompt, the panel or page prompt if the fault is shared, or the
+description in the bible), stitch the prompt again (quote the descriptions more
+exactly, attach the reference), regenerate that one image, and swap it in. The
+stored prompts then still describe what produced the image.
 
 ### 10. Keep the bible current, save and report
 
@@ -284,10 +308,14 @@ update the prompt on the layer so it records what actually produced the image.
 
 Before generating any image, confirm:
 
+- The prompt is stitched from the stored parts, in order: the STYLE paragraph,
+  the page prompt, the panel prompt, the scene, the characters and objects, the
+  layer prompt, then the technical requirements.
 - The STYLE paragraph is in the prompt, verbatim.
 - Every character, place and prop in the image is in the prompt with its
   description verbatim.
 - Its reference art is attached, if the generator takes images.
 - It is the right kind: a transparent PNG subject for foreground layers, an
   opaque exact-ratio picture for backgrounds.
-- The prompt is written down on the layer.
+- The page prompt, the panel prompt and the layer prompt are written down in the
+  project, so the plan is on record and the user can read it.

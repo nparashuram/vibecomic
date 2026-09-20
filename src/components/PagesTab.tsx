@@ -5,6 +5,7 @@ import { formatPageLabel } from '../types/comic';
 import { usePersistentChoice } from '../utils/usePersistentChoice';
 import { useMediaQuery } from '../utils/useViewport';
 import InspectorPane from './InspectorPane';
+import PageDetails from './PageDetails';
 import PageSheet from './PageSheet';
 import { SNAPS } from './sheetSnaps';
 import type { Snap } from './sheetSnaps';
@@ -142,6 +143,7 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
                   panel ? panelSummary(panels.indexOf(panel) + 1, panel) : 'No panel selected'
                 }
               >
+                <PageDetails page={page} pageIndex={pageIndex} />
                 {panel ? (
                   <PanelInspector
                     page={page}

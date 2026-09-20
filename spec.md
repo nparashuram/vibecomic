@@ -133,7 +133,10 @@ Google Drive API ◄── OAuth token (page memory) ── saveProjectJson()
      height is remembered per browser (localStorage) and the
      closed sheet's content is inert (unfocusable). The page area takes whatever
      room the sheet leaves; crossing the breakpoint swaps the layout in place.
-   - **Inspector** (for the highlighted panel), top to bottom: **Bubbles**
+   - **Inspector**, top to bottom: **Page** (always shown, even when no panel is
+     highlighted): the **Page prompt** box, the intent of the whole page
+     (`PageDetails`, `page.update`); then, for the highlighted panel, the
+     **Panel prompt** box (`panels.update`) and **Bubbles**
      ("+ Speech / Thought / Caption" and a row per bubble), **Layers** (a row
      per layer, top of the stack first, with a ≡ handle to drag it into a new position (the rows stay in place in the DOM and are shown in the new order with CSS `order`, since moving a dragged element would drop its pointer capture), a
      visibility checkbox, a chevron to expand its details, its name to select
@@ -179,9 +182,11 @@ project folder holds exactly one `project.json`.
 - `ComicProject` — `{ id, title, pages[], updatedAt, savedAt, metadata }`.
   `savedAt` is stamped on every successful Drive write and drives the
   Saving/Saved indicator.
-- `ComicPage` — `{ id, number, title, panels[] }`. `number` is 0-based and
-  displayed as is (`0` = cover, `1` = page one).
-- `Panel` — `{ id, title?, x, y, width, height, layers[], bubbles[] }`.
+- `ComicPage` — `{ id, number, title, prompt?, panels[] }`. `number` is 0-based and
+  displayed as is (`0` = cover, `1` = page one). `prompt` is the intent of the
+  whole page (what happens, mood, pacing); see "Prompts" below.
+- `Panel` — `{ id, title?, prompt?, x, y, width, height, layers[], bubbles[] }`.
+  `prompt` is the intent of the panel (its moment, camera, mood).
   `x`/`y`/`width`/`height` are percentages of the **page**. The panels of a
   page tile it (no gaps or overlaps), and each is at least 5% of the page
   wide and tall. A panel's aspect ratio follows from its rectangle and
@@ -197,6 +202,7 @@ prompt?, aspectRatio?, visible, x, y, width, rotation, opacity }`. A layer
   that has no image yet and tells the generator what proportions to use.
   Foreground layers should usually be PNGs with a transparent background;
   a background should be generated at its panel's aspect ratio.
+  A layer's `prompt` is only its own part of the image prompt; see "Prompts" below.
   There is **no separate background field**: the background is the layer
   whose `kind` is `"background"`; it always fills the panel (cropped, never
   stretched) and sits at the bottom, so its `x`/`y`/`width` are ignored.
@@ -237,6 +243,19 @@ host app through `ComicBuilderDeps` (getProject, updateProject,
 replaceProject, page index, preview, status, storage, media). The API is
 also the app's **LLM skill**: see §5.
 
+**Prompts.** Three levels of the project carry a `prompt`, each saying only
+what belongs to it: the page (its intent: what happens, mood, pacing), the panel
+(its moment, camera, mood) and the layer (what that one image shows). The prompt
+for the image of a layer, a background included, is not stored: an LLM stitches
+it from the stored parts at generation time, in this order: the STYLE paragraph
+(in `metadata.outline`), the page prompt, the panel prompt, the scene
+description, the description of each character and object in the image, and the
+layer prompt (then the technical requirements). Keeping the levels separate
+means a fix to a page prompt or a character description flows into every image
+stitched from it afterwards. All three are optional strings (validated on load
+and by the API; `""` clears one), editable in the UI and through the API
+(`page.update`, `panels.update`, `layers.update`) and so through the CLI.
+
 Namespaces:
 
 - `help()`
@@ -245,13 +264,15 @@ Namespaces:
   first; stays open if saving fails), `showProjects()`, `save()`
 - `project` — `load(data)` (replace the whole project from JSON, validated)
 - `page` — `count()`, `select(i)`, `current()`, `add(input?)` (append a page
-  with one full-page panel and show it), `openPreview()`, `closePreview()`
+  with one full-page panel and show it; `input` is `{ title?, prompt? }`),
+  `update(patch, pageIndex?)` (`{ title?, prompt? }` of the current or given
+  page), `openPreview()`, `closePreview()`
 - `panels` — `list(pageIndex?)`, `get(panelId)`, `size(panelId)` (inches and
   aspect ratio and the pixel size to generate at, for sizing artwork),
   `splitAcross(axis, position, pageIndex?)` (a line across the whole page,
   cutting every panel it crosses), `split(panelId, axis, position?)`,
   `splitEvenly(panelId, axis, count)`, `resize(panelId, edge, position)`,
-  `update(panelId, { title })`, `delete(panelId)`. `axis` is `"horizontal"`
+  `update(panelId, { title?, prompt? })`, `delete(panelId)`. `axis` is `"horizontal"`
   (a horizontal line: top and bottom parts) or `"vertical"`. Splitting keeps
   the original panel's id and content as the first (top/left) part and
   inserts the new empty panel right after it. `resize` moves one edge and
@@ -324,8 +345,9 @@ generator it calls itself; the app never draws), then walks it through the
 build in order: agree the brief and a **visual style** (a STYLE paragraph
 that starts every prompt), build the **story bible** (outline, characters,
 scenes, objects, reference art), plan the pages and panel layouts (pacing,
-camera, room for bubbles), **fill in a prompt for every layer before any
-image exists**, write every prompt from the same parts, generate to spec
+camera, room for bubbles), **write the page, panel and layer prompts before
+any image exists**, stitch every image prompt from those stored parts in the
+same order, generate to spec
 (**foreground layers are transparent PNGs holding only their subject**,
 because they are stacked on other layers; backgrounds are opaque at the
 panel's exact aspect ratio; match lighting, palette and scale), attach and

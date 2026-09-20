@@ -4,6 +4,7 @@ import BackgroundSection from './BackgroundSection';
 import BubblesSection from './BubblesSection';
 import LayersSection from './LayersSection';
 import { TrashIcon } from './Icons';
+import PromptField from './PromptField';
 import type { Selection } from './selection';
 import { useExpansion } from './useExpansion';
 
@@ -47,6 +48,14 @@ export default function PanelInspector({ page, panel, media, selection, onSelect
         </button>
       </div>
 
+      <PromptField
+        id="panel-prompt"
+        label="Panel prompt"
+        placeholder="The moment this panel shows: camera, mood, what it must get across"
+        help="The intent of this panel. It follows the page prompt and precedes each layer prompt."
+        value={panel.prompt ?? ''}
+        onChange={(prompt) => cb().panels.update(panel.id, { prompt })}
+      />
       <BubblesSection
         panel={panel}
         selection={selection}
