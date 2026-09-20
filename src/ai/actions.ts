@@ -895,13 +895,62 @@ function createComicBuilder(deps: ComicBuilderDeps) {
        * character reference images with this, then wire the returned id into a
        * layer (layers.add with mediaId) or a character / scene / object (imageIds).
        * The returned url is the image's Drive URL.
+       *
+       * Always send a thumbnail with the image. The editor's media picker
+       * lists every image in the project as a thumbnail, and an image with
+       * none has to be downloaded in full just to appear there: slow and
+       * heavy once a project has many images, or large ones. So resize the
+       * image yourself, where you already have its pixels, to about 256px on
+       * the long side (keep the aspect ratio; PNG if the image has
+       * transparency so cut-outs stay cut out, otherwise JPEG at about 85%
+       * quality, typically 10-30 KB) and pass it as opts.thumbnailDataUrl. If
+       * you leave it out, the browser makes one from the full image: that
+       * works, but only after decoding the whole upload in the page, so a
+       * thumbnail you already have is cheaper. Images uploaded without a
+       * thumbnail can be fixed later with media.uploadThumbnail.
        * @param name - File name, e.g. "hero-front.png".
        * @param dataUrl - The image bytes as a data: URL (e.g. from a generated PNG).
-       * @param opts - Optional { mimeType }: defaults to "image/png".
-       * @returns A promise resolving to the new MediaItem.
+       * @param opts - Optional { mimeType, thumbnailDataUrl }: mimeType defaults to "image/png"; thumbnailDataUrl is the image resized to about 256px on its long side, as a data: URL (PNG for transparent images, else JPEG). Strongly recommended.
+       * @returns A promise resolving to the new MediaItem. Its thumbnailDriveFileId is set when a thumbnail was stored; if it is missing, retry with media.uploadThumbnail.
        */
-      upload: (name: string, dataUrl: string, opts?: { mimeType?: string }): Promise<MediaItem> =>
-        deps.uploadStorageMedia(name, dataUrl, opts?.mimeType || 'image/png'),
+      upload: (
+        name: string,
+        dataUrl: string,
+        opts?: { mimeType?: string; thumbnailDataUrl?: string }
+      ): Promise<MediaItem> =>
+        deps.uploadStorageMedia(
+          name,
+          dataUrl,
+          opts?.mimeType || 'image/png',
+          opts?.thumbnailDataUrl
+        ),
+
+      /**
+       * Upload the thumbnail of an image already in the registry, replacing
+       * its old one. The editor shows the thumbnail instead of the full image
+       * in lists and pickers, so the media picker does not have to download
+       * every full image. Resize the image yourself and give it a small copy:
+       * about 256px on the long side, PNG when the image has transparency
+       * (so cut-outs stay cut out), else JPEG at about 85% quality. Use it for
+       * images uploaded without a thumbnail, and to replace a poor one.
+       * @param id - The media id.
+       * @param dataUrl - The thumbnail bytes as a data: URL.
+       * @returns A promise resolving to the updated MediaItem, whose thumbnailDriveFileId is the new thumbnail's Drive file id. Rejects when the media id is not found.
+       */
+      uploadThumbnail: (id: string, dataUrl: string): Promise<MediaItem> =>
+        deps.uploadStorageThumbnail(id, dataUrl),
+
+      /**
+       * Delete an image: its file and its thumbnail move to the Drive trash
+       * (recoverable there) and it leaves the registry. Anything using it
+       * lets go of it: layers showing it stay but lose their image (they are
+       * prompt-only layers again), and characters, scenes and objects drop it
+       * from their imageIds.
+       * @param id - The media id.
+       * @returns A promise resolving to { layers, entries }: how many layers lost their image and how many story-bible entries lost a reference image. Rejects when the media id is not found or Drive is not connected.
+       */
+      delete: (id: string): Promise<{ layers: number; entries: number }> =>
+        deps.deleteStorageMedia(id),
     },
   };
 

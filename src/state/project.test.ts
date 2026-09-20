@@ -91,3 +91,18 @@ test('normalizeProject turns a Drive share link into the canonical URL', () => {
   normalizeProject(project);
   assert.equal(project.pages[0].panels[0].layers[0].src, DRIVE_URL);
 });
+
+test('a media item may carry a thumbnail Drive file id, which must be a string', () => {
+  const project = createBlankProject('Test');
+  project.metadata.media.push({
+    id: 'm1',
+    name: 'a.png',
+    driveFileId: 'F1',
+    url: DRIVE_URL,
+    mimeType: 'image/png',
+    thumbnailDriveFileId: 'T1',
+  });
+  assertValidProject(project);
+  (project.metadata.media[0] as unknown as Record<string, unknown>).thumbnailDriveFileId = 5;
+  assert.throws(() => assertValidProject(project), /thumbnailDriveFileId/);
+});

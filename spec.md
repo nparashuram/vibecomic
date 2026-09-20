@@ -140,10 +140,23 @@ Google Drive API ◄── OAuth token (page memory) ── saveProjectJson()
      it, and a trash icon; "Expand all / Collapse all"; "Add layer", which adds
      an empty layer, selects and expands it and focuses its prompt so you can
      type what it should show), **Background** ("Set background", which becomes a
-     "Background" row with the same chevron and trash icon). Expanded, a layer shows its name, prompt, an "Add image" /
-     "Change image" button (upload a new image or pick one already in the
-     project, with a spinner while it works) and opacity; a bubble shows its text and kind. Position, size and rotation are
+     "Background" row with the same chevron and trash icon). Expanded, a layer shows its name, prompt, its image as a thumbnail
+     (or an "Add image" tile when it has none; no file name or pixel size) and opacity; a bubble shows its text and kind. Position, size and rotation are
      only on the page. Expanding a row and selecting it are independent.
+   - **Media picker** (`MediaPicker`, one component for every place an image is chosen): clicking
+     the thumbnail, or "Set background", opens a popup with a thumbnail of every image in the
+     project (transparent images on a checkerboard), the current one outlined, and an "Upload
+     new image…" button; picking or uploading closes it and shows a spinner on the thumbnail
+     while it works. Images are ordered by what they are for. For a background: "Fits this
+     panel" (opaque, aspect ratio within 5% of the panel's), then "Other backgrounds" (opaque),
+     then "Other images". For a layer: "Transparent images" first, then "Other images". Shape and
+     transparency are read from the pixels once per file (`mediaImages.ts`), from the thumbnail when
+     there is one, and not stored. The list is paged, 24 images at a time (Previous / Next and
+     "Page 2 of 5" in the footer, opening on the page that holds the current image); a group cut
+     by a page break repeats its title. Over the top corner of each thumbnail are two icons:
+     **open in a new tab** (the full image, from a blob URL because Drive needs the access token;
+     the tab is opened inside the click so pop-up blockers allow it) and **delete** (confirms, then
+     `media.delete`, which stays in the picker). Lists and pickers show thumbnails, never full files.
 
 4. **Preview overlay** (`preview` boolean) — the current page's panels with
    minimal chrome (page number/title + "Close preview"), rendered on a dark
@@ -210,7 +223,7 @@ objects[], media[] }`: the story bible plus the media registry.
 - `Character` / `ComicObject` — `{ id, name, description, imageIds[],
 sceneIds[] }`. The description carries visual continuity guidance.
 - `Scene` — `{ id, name, description, characterIds[], imageIds[] }`.
-- `MediaItem` — `{ id, name, driveFileId, url, mimeType }`. `url` values
+- `MediaItem` — `{ id, name, driveFileId, url, mimeType, thumbnailDriveFileId? }`. The thumbnail is a small Drive file (about 256px on the long side; PNG if the image has transparency, else JPEG) that the UI shows instead of the full image. `media.upload` documents that the caller (an LLM) should resize the image and pass `thumbnailDataUrl`, so the media picker never has to download full images; if it is omitted the browser makes one; `media.uploadThumbnail(id, dataUrl)` adds or replaces one. `media.delete(id)` trashes both files on Drive, then removes the item, empties the `src`/`mediaId` of layers using it and drops it from `imageIds` (`src/state/media.ts`). `url` values
   require a valid Drive access token to fetch bytes.
 
 Structural validation lives in `src/state/project.ts` (`assertValidProject`,
@@ -331,8 +344,8 @@ they cannot drift from the code.
   `uploadImage()` and registered as `MediaItem`s; every image is a Drive file. Layers store its
   Drive URL. Because Drive needs the access token, `useDriveImage` fetches
   the bytes once (`loadBlobUrl`) and shows them from a blob URL. Character
-  reference images are uploaded from the Characters tab via
-  `media.upload` and shown as blob-URL thumbnails.
+  reference images are uploaded from the Characters and Scenes tabs via
+  `media.upload` and shown as blob-URL thumbnails (the media thumbnail, `thumbnailDriveFileId`).
 - **Client IDs:** `GOOGLE_CLIENT_ID` (Web application, GIS popup) and
   `GOOGLE_DEVICE_CLIENT_ID` + `GOOGLE_DEVICE_CLIENT_SECRET`
   ("TVs and Limited Input devices", device flow) at build time. They are
@@ -448,7 +461,7 @@ it's drawn comic content, it's custom CSS.
   canvas (`PageSheet`, `CutHandle`, `PanelView`, `LayerBox`, `BubbleView`, `CornerHandle`,
   `bubbleShape.ts`) and the inspector (`InspectorPane`, `BottomSheet`, `PanelInspector`, `BubblesSection`,
   `LayersSection`, `BackgroundSection`, `LayerRow`, `LayerDetails`,
-  `MediaPicker`, `RowButtons`). Small hooks and helpers live beside them
+  `MediaPicker`, `MediaSlot`, `RowButtons`). Small hooks and helpers live beside them
   (`useTask`, `useExpansion`, `useDriveImage`, `panelActions`, `selection`).
 - `src/ai/` — `actions.ts` (the documented `window.ComicBuilder` literal:
   the JSDoc there is the source of the LLM docs), `builders.ts` (the shared

@@ -84,6 +84,11 @@ export interface MediaItem {
   url: string;
   /** e.g. "image/png" */
   mimeType: string;
+  /**
+   * Drive file id of a small copy of the image (about 256px on its long side) that the UI shows
+   * in lists and pickers instead of the full file. Absent when none was made.
+   */
+  thumbnailDriveFileId?: string;
 }
 
 /** Shared shape of the story-bible entries: visual description plus reference art. */

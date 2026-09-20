@@ -1,14 +1,173 @@
 import { downloadFile } from '../drive/driveClient';
+import type { MediaItem } from '../types/comic';
 
 const blobUrls = new Map<string, Promise<string>>();
 
-/** Drive URLs need an auth header, so images are fetched once and shown from blob URLs. */
-export function loadBlobUrl(driveFileId: string): Promise<string> {
-  let url = blobUrls.get(driveFileId);
-  if (!url) {
-    url = downloadFile(driveFileId).then((blob) => URL.createObjectURL(blob));
-    url.catch(() => blobUrls.delete(driveFileId));
-    blobUrls.set(driveFileId, url);
+// Downloads go through a small queue: a picker with dozens of images must not fire them all at once
+// (Drive answers a burst with rate-limit errors). Images on screen jump ahead of background work.
+type Priority = 'high' | 'low';
+interface Job {
+  id: string;
+  priority: Priority;
+  run: () => void;
+}
+const MAX_DOWNLOADS = 4;
+const queue: Job[] = [];
+let active = 0;
+
+function pump() {
+  while (active < MAX_DOWNLOADS && queue.length > 0) {
+    const next = queue.findIndex((job) => job.priority === 'high');
+    const [job] = queue.splice(Math.max(next, 0), 1);
+    active++;
+    job.run();
   }
+}
+
+function schedule<T>(id: string, priority: Priority, task: () => Promise<T>): Promise<T> {
+  return new Promise((resolve, reject) => {
+    queue.push({
+      id,
+      priority,
+      run: () =>
+        task()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            pump();
+          }),
+    });
+    pump();
+  });
+}
+
+const RETRY_DELAY_MS = 500;
+const MAX_ATTEMPTS = 3;
+
+/** Drive's "slow down" answers: too many requests, a quota, or a server hiccup. */
+function isRetryable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  return /Drive API error (429|5\d\d)/.test(message) || /rate ?limit|quota/i.test(message);
+}
+
+async function downloadWithRetry(driveFileId: string): Promise<Blob> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await downloadFile(driveFileId);
+    } catch (e) {
+      if (attempt >= MAX_ATTEMPTS || !isRetryable(e)) throw e;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_DELAY_MS * 2 ** (attempt - 1)));
+    }
+  }
+}
+
+/**
+ * Drive URLs need an auth header, so images are fetched once and shown from blob URLs. `low`
+ * priority is for work nobody is looking at; asking for the same file at `high` speeds it up.
+ */
+export function loadBlobUrl(driveFileId: string, priority: Priority = 'high'): Promise<string> {
+  let url = blobUrls.get(driveFileId);
+  if (url) {
+    if (priority === 'high') {
+      for (const job of queue) if (job.id === driveFileId) job.priority = 'high';
+    }
+    return url;
+  }
+  url = schedule(driveFileId, priority, () => downloadWithRetry(driveFileId)).then((blob) =>
+    URL.createObjectURL(blob)
+  );
+  url.catch(() => blobUrls.delete(driveFileId));
+  blobUrls.set(driveFileId, url);
   return url;
+}
+
+/** An image as shown in lists and pickers: its thumbnail, or the full image when it has none or the thumbnail cannot be loaded. */
+export async function loadDisplayUrl(
+  item: Pick<MediaItem, 'driveFileId' | 'thumbnailDriveFileId'>,
+  priority: Priority = 'high'
+): Promise<string> {
+  if (item.thumbnailDriveFileId) {
+    try {
+      return await loadBlobUrl(item.thumbnailDriveFileId, priority);
+    } catch {
+      // Fall through to the full image.
+    }
+  }
+  return loadBlobUrl(item.driveFileId, priority);
+}
+
+/**
+ * Show an image full size in a new browser tab. Drive needs the access token, so the tab shows a
+ * blob URL of the downloaded bytes; the tab is opened first, inside the click, so pop-up blockers
+ * allow it. Throws when the browser blocks the tab.
+ */
+export function openInNewTab(item: Pick<MediaItem, 'driveFileId' | 'name'>): void {
+  const tab = window.open('', '_blank');
+  if (!tab) throw new Error('The browser blocked the new tab. Allow pop-ups for this site.');
+  tab.document.title = item.name;
+  tab.document.body.textContent = 'Loading image…';
+  loadBlobUrl(item.driveFileId).then(
+    (url) => {
+      tab.location.href = url;
+    },
+    () => {
+      tab.document.body.textContent = 'Could not load the image.';
+    }
+  );
+}
+
+/** What the picker needs to know about an image: its shape and whether it has see-through areas. */
+export interface MediaInfo {
+  /** Width / height. */
+  aspect: number;
+  /** Has a real share of transparent pixels: a cut-out for a layer rather than a full-bleed background. */
+  transparent: boolean;
+}
+
+const infos = new Map<string, MediaInfo>();
+const pendingInfos = new Map<string, Promise<MediaInfo>>();
+
+const MIME_WITH_ALPHA = /png|webp|gif|avif|svg/;
+const SAMPLE_SIZE = 64;
+
+function hasTransparency(image: HTMLImageElement): boolean {
+  const scale = Math.min(1, SAMPLE_SIZE / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext('2d');
+  if (!context) return false;
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+  let clear = 0;
+  for (let i = 3; i < data.length; i += 4) if (data[i] < 250) clear++;
+  return clear / (data.length / 4) > 0.005;
+}
+
+/** The info of an image that has already been read, else undefined. */
+export function cachedMediaInfo(driveFileId: string): MediaInfo | undefined {
+  return infos.get(driveFileId);
+}
+
+/** Read an image's shape and transparency (once per file), from its thumbnail when it has one. */
+export function loadMediaInfo(
+  item: Pick<MediaItem, 'driveFileId' | 'thumbnailDriveFileId' | 'mimeType'>
+): Promise<MediaInfo> {
+  let info = pendingInfos.get(item.driveFileId);
+  if (!info) {
+    info = (async () => {
+      const image = new Image();
+      image.src = await loadDisplayUrl(item, 'low');
+      await image.decode();
+      const result = {
+        aspect: Math.round((image.naturalWidth / image.naturalHeight) * 1000) / 1000,
+        transparent: MIME_WITH_ALPHA.test(item.mimeType) && hasTransparency(image),
+      };
+      infos.set(item.driveFileId, result);
+      return result;
+    })();
+    info.catch(() => pendingInfos.delete(item.driveFileId));
+    pendingInfos.set(item.driveFileId, info);
+  }
+  return info;
 }

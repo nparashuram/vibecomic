@@ -65,13 +65,9 @@ function checkMetadata(value: unknown, path: string): void {
   objects.forEach((o, i) => checkStoryEntry(o, `${path}.objects[${i}]`, 'sceneIds'));
   media.forEach((item, i) => {
     const mediaPath = `${path}.media[${i}]`;
-    expectStrings(expectRecord(item, mediaPath), mediaPath, [
-      'id',
-      'name',
-      'driveFileId',
-      'url',
-      'mimeType',
-    ]);
+    const record = expectRecord(item, mediaPath);
+    expectStrings(record, mediaPath, ['id', 'name', 'driveFileId', 'url', 'mimeType']);
+    optionalString(record, mediaPath, 'thumbnailDriveFileId');
   });
 }
 

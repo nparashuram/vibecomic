@@ -18,6 +18,15 @@ export function TrashIcon() {
   );
 }
 
+/** A box with an arrow leaving it: opens something in a new tab. */
+export function ExternalIcon() {
+  return (
+    <svg {...icon}>
+      <path d="M9.5 2.5h4v4M13.5 2.5 7.5 8.5M12 9v3.5a1 1 0 0 1-1 1H3.5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1H7" />
+    </svg>
+  );
+}
+
 /** Points right; `open` turns it down (a row is expanded). */
 export function ChevronIcon({ open }: { open: boolean }) {
   return (

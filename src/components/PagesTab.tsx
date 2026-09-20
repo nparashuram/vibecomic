@@ -73,12 +73,16 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
       : undefined,
   };
 
-  // Delete or Backspace removes the selected layer or bubble (unless typing in a field).
+  // Delete or Backspace removes the selected layer or bubble (unless typing in a field or in a popup).
   const panelId = panel?.id;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Delete' && event.key !== 'Backspace') return;
-      if ((event.target as HTMLElement).closest('input, textarea, select, [contenteditable]'))
+      if (
+        (event.target as HTMLElement).closest(
+          'input, textarea, select, [contenteditable], [role="dialog"]'
+        )
+      )
         return;
       if (!panelId) return;
       if (current.layerId) cb().layers.delete(panelId, current.layerId);

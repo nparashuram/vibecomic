@@ -16,7 +16,7 @@ const STORY_TABS = {
     title: 'Scenes',
     singular: 'scene',
     placeholder: 'Setting, time of day, mood, lighting…',
-    referenceImages: false,
+    referenceImages: true,
   },
 } as const;
 

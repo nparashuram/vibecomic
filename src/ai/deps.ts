@@ -1,3 +1,4 @@
+import type { MediaRemoval } from '../state/media';
 import type { DeviceCodeInfo, ProjectFolder } from '../drive/driveClient';
 import type { Bubble, ComicProject, Layer, MediaItem, PageSize } from '../types/comic';
 
@@ -31,7 +32,16 @@ export interface ComicBuilderDeps {
   showProjectTiles(): Promise<ProjectFolder[]>;
   /** Save now if there are unsaved changes. */
   flushStorageSave(): Promise<ActionResult>;
-  uploadStorageMedia(name: string, dataUrl: string, mimeType: string): Promise<MediaItem>;
+  uploadStorageMedia(
+    name: string,
+    dataUrl: string,
+    mimeType: string,
+    thumbnailDataUrl?: string
+  ): Promise<MediaItem>;
+  /** Store (or replace) the thumbnail of a registered image. */
+  uploadStorageThumbnail(id: string, dataUrl: string): Promise<MediaItem>;
+  /** Trash a registered image on Drive and remove it from the project and everything using it. */
+  deleteStorageMedia(id: string): Promise<MediaRemoval>;
   /** Fetch a registered image's bytes from Drive as a data URL. */
   downloadStorageMedia(id: string): Promise<{ name: string; mimeType: string; dataUrl: string }>;
 }

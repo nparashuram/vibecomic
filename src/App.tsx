@@ -21,10 +21,13 @@ import {
   requestDeviceAccess,
   requestDriveAccess,
   saveProjectJson,
+  trashFile,
   uploadImage,
 } from './drive/driveClient';
 import type { DeviceCodeInfo, ProjectFolder } from './drive/driveClient';
 import { loadProject } from './drive/projectStore';
+import { removeMedia } from './state/media';
+import type { MediaRemoval } from './state/media';
 import { createBlankProject } from './state/project';
 import { useProjectSaver } from './state/useProjectSaver';
 import type { ComicProject, MediaItem } from './types/comic';
@@ -33,8 +36,15 @@ import { errorMessage } from './utils/errors';
 import { dataUrlToFile, readFileAsDataUrl } from './utils/files';
 import { driveFileUrl } from './utils/driveUrl';
 import { newId } from './utils/id';
+import { makeThumbnail, thumbnailName } from './utils/thumbnail';
 
 type Screen = 'splash' | 'tiles' | 'editor';
+
+/** Put a thumbnail of `item` in the project folder; returns its Drive file id. */
+async function storeThumbnail(folderId: string, item: MediaItem, thumbnail: File): Promise<string> {
+  const name = thumbnailName(item.name, thumbnail.type);
+  return (await uploadImage(folderId, thumbnail, name)).id;
+}
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash');
@@ -239,10 +249,14 @@ export default function App() {
         return { name: item.name, mimeType: item.mimeType, dataUrl };
       },
 
-      uploadStorageMedia: async (name, dataUrl, mimeType) => {
+      uploadStorageMedia: async (name, dataUrl, mimeType, thumbnailDataUrl) => {
         const folderId = folderIdRef.current;
         if (!folderId) throw new Error('No project folder is open.');
-        const uploaded = await uploadImage(folderId, dataUrlToFile(dataUrl, name, mimeType), name);
+        const file = dataUrlToFile(dataUrl, name, mimeType);
+        const given = thumbnailDataUrl
+          ? dataUrlToFile(thumbnailDataUrl, name, 'image/png')
+          : undefined;
+        const uploaded = await uploadImage(folderId, file, name);
         const item: MediaItem = {
           id: newId('media'),
           name: uploaded.name,
@@ -250,10 +264,48 @@ export default function App() {
           url: driveFileUrl(uploaded.id),
           mimeType: uploaded.mimeType || mimeType,
         };
+        try {
+          const thumbnail = given ?? (await makeThumbnail(file, name));
+          if (thumbnail)
+            item.thumbnailDriveFileId = await storeThumbnail(folderId, item, thumbnail);
+        } catch {
+          // The image is safe; without a thumbnail the UI shows the full file (media.uploadThumbnail can add one).
+        }
         deps.updateProject((p) => {
           p.metadata.media.push(item);
         });
         return structuredClone(item);
+      },
+
+      uploadStorageThumbnail: async (id, dataUrl) => {
+        const folderId = folderIdRef.current;
+        if (!folderId) throw new Error('No project folder is open.');
+        const item = projectRef.current?.metadata.media.find((m) => m.id === id);
+        if (!item) throw new Error(`Media "${id}" not found.`);
+        const thumbnail = dataUrlToFile(dataUrl, item.name, 'image/png');
+        const previous = item.thumbnailDriveFileId;
+        const thumbnailDriveFileId = await storeThumbnail(folderId, item, thumbnail);
+        deps.updateProject((p) => {
+          const target = p.metadata.media.find((m) => m.id === id);
+          if (target) target.thumbnailDriveFileId = thumbnailDriveFileId;
+        });
+        if (previous) await trashFile(previous).catch(() => undefined);
+        return structuredClone({ ...item, thumbnailDriveFileId });
+      },
+
+      deleteStorageMedia: async (id) => {
+        const item = projectRef.current?.metadata.media.find((m) => m.id === id);
+        if (!item) throw new Error(`Media "${id}" not found.`);
+        // Trash first: if Drive refuses, the project is left as it was.
+        await trashFile(item.driveFileId);
+        if (item.thumbnailDriveFileId) {
+          await trashFile(item.thumbnailDriveFileId).catch(() => undefined);
+        }
+        let removal: MediaRemoval = { layers: 0, entries: 0 };
+        deps.updateProject((p) => {
+          removal = removeMedia(p, id);
+        });
+        return removal;
       },
     };
 

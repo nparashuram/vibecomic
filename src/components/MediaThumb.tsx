@@ -1,40 +1,41 @@
-import { useEffect, useState } from 'react';
 import type { MediaItem } from '../types/comic';
-import { loadBlobUrl } from './mediaImages';
+import { useMediaUrl } from './useMediaUrl';
 
 interface Props {
   item: MediaItem;
   onRemove: () => void;
+  /** Called when the image itself is clicked (e.g. to enlarge it). */
+  onOpen?: () => void;
 }
 
 /** A square thumbnail of a media item, with a button to remove it. */
-export default function MediaThumb({ item, onRemove }: Props) {
-  const [src, setSrc] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
-
-  useEffect(() => {
-    let current = true;
-    loadBlobUrl(item.driveFileId).then(
-      (url) => current && setSrc(url),
-      () => current && setFailed(true)
-    );
-    return () => {
-      current = false;
-    };
-  }, [item.driveFileId]);
+export default function MediaThumb({ item, onRemove, onOpen }: Props) {
+  const { url, failed, error } = useMediaUrl(item);
 
   return (
     <div className="position-relative" style={{ width: 72, height: 72 }}>
-      {src ? (
-        <img
-          src={src}
-          alt={item.name}
-          title={item.name}
-          className="img-thumbnail w-100 h-100"
-          style={{ objectFit: 'cover' }}
-        />
+      {url ? (
+        <button
+          type="button"
+          className="p-0 border-0 bg-transparent w-100 h-100"
+          style={{ cursor: onOpen ? 'zoom-in' : undefined }}
+          aria-label={`Enlarge ${item.name}`}
+          disabled={!onOpen}
+          onClick={onOpen}
+        >
+          <img
+            src={url}
+            alt=""
+            title={item.name}
+            className="img-thumbnail w-100 h-100"
+            style={{ objectFit: 'cover' }}
+          />
+        </button>
       ) : (
-        <div className="border rounded w-100 h-100 d-flex align-items-center justify-content-center text-muted small">
+        <div
+          className="border rounded w-100 h-100 d-flex align-items-center justify-content-center text-muted small"
+          title={error ?? undefined}
+        >
           {failed ? 'Failed' : '…'}
         </div>
       )}

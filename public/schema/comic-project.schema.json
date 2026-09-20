@@ -208,6 +208,10 @@
         "name": {
           "type": "string"
         },
+        "thumbnailDriveFileId": {
+          "description": "Optional Google Drive file id of a small copy of the image (about 256px on its long side) shown in lists and pickers instead of the full file.",
+          "type": "string"
+        },
         "url": {
           "description": "Drive URL for the file. Fetching the bytes needs a valid Drive access token.",
           "type": "string"

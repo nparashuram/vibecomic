@@ -370,6 +370,19 @@ export function uploadImage(folderId: string, file: File, name?: string): Promis
   );
 }
 
+/** Move a file to the Drive trash (recoverable there). A file that is already gone counts as trashed. */
+export async function trashFile(fileId: string): Promise<void> {
+  try {
+    await driveRequest(`${DRIVE_API}/files/${fileId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trashed: true }),
+    });
+  } catch (e) {
+    if (!(e instanceof Error && e.message.startsWith('Drive API error 404'))) throw e;
+  }
+}
+
 export async function downloadFile(fileId: string): Promise<Blob> {
   const res = await driveRequest(`${DRIVE_API}/files/${fileId}?alt=media`);
   return await res.blob();
