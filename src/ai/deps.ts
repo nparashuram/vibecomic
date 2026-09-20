@@ -32,6 +32,8 @@ export interface ComicBuilderDeps {
   /** Save now if there are unsaved changes. */
   flushStorageSave(): Promise<ActionResult>;
   uploadStorageMedia(name: string, dataUrl: string, mimeType: string): Promise<MediaItem>;
+  /** Fetch a registered image's bytes from Drive as a data URL. */
+  downloadStorageMedia(id: string): Promise<{ name: string; mimeType: string; dataUrl: string }>;
 }
 
 /** Input for layers.add(). Geometry is in % of panel size; the image is a mediaId or a Drive URL src, or omitted for a layer that is only a prompt so far. */

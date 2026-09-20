@@ -229,7 +229,34 @@ function createComicBuilder(deps: ComicBuilderDeps) {
     },
 
     /**
-     * Page navigation, preview and page creation for the open project.
+     * Pages: navigation, preview and creating pages.
+     *
+     * HOW A PAGE IS BUILT. A page always starts with ONE panel that covers the
+     * whole page (page.add() makes one, and a new project's cover has one).
+     * There is no "add a panel" call: you get more panels by CUTTING that
+     * panel up with the panels functions, then adjust the dividing lines with
+     * panels.resize, then fill each panel with layers and bubbles. Every cut
+     * keeps the original panel (its id, layers and bubbles) as the first part
+     * and returns the new, empty parts, so cuts can be chained.
+     *
+     * Examples (each starts from a fresh page; page.add() returns the page,
+     * and its single panel is panels[0]):
+     *
+     *   const [p] = page.add().panels;
+     *   panels.splitEvenly(p.id, "horizontal", 3);          // three equal rows
+     *
+     *   const [p] = page.add().panels;
+     *   const [top, bottom] = panels.split(p.id, "horizontal", 40);
+     *   panels.split(bottom.id, "vertical", 50);            // wide top, two columns below
+     *   panels.resize(top.id, "bottom", 45);                // then nudge a dividing line
+     *
+     *   const [p] = page.add().panels;
+     *   const [left, right] = panels.split(p.id, "vertical", 60);
+     *   panels.splitEvenly(right.id, "horizontal", 2);      // tall left, two stacked right
+     *
+     *   page.add();
+     *   panels.splitAcross("horizontal", 33.3);             // tiers cut with lines across
+     *   panels.splitAcross("horizontal", 66.6);             // the whole page
      */
     page: {
       /**
@@ -260,9 +287,11 @@ function createComicBuilder(deps: ComicBuilderDeps) {
       },
 
       /**
-       * Append a new page after the last page and show it. It starts with one
-       * empty panel covering the whole page; cut it up with panels.splitAcross,
-       * panels.split or panels.splitEvenly.
+       * Append a new page after the last page and show it. It starts with ONE
+       * empty panel covering the whole page. To get more panels, cut it up: e.g.
+       * panels.splitEvenly(panelId, "horizontal", 3) for three rows, or
+       * panels.split(panelId, "vertical", 60) for a wide and a narrow panel
+       * (see the panels namespace).
        * @param input - Optional { title } for the page. Defaults to an empty title.
        * @returns A deep-cloned snapshot of the new ComicPage (with its single panel).
        */
@@ -297,14 +326,26 @@ function createComicBuilder(deps: ComicBuilderDeps) {
     /**
      * The panels of a page. Panels are rectangles (x, y, width, height in % of
      * the page) that always tile the page with no gaps or overlaps, like a
-     * comic layout, in any proportions. A page starts with one panel; cut it up
-     * with splitAcross / split / splitEvenly and move the dividing lines with
-     * resize. A panel's aspect ratio follows from its rectangle and
-     * metadata.pageSize (see size), so generate artwork at that ratio. The panel
-     * array is in the order the panels were created (the numbers shown on the
-     * page): a new panel is inserted right after the one it was cut from, so it
-     * is not always left-to-right, top-to-bottom. Use x and y to tell where a
-     * panel is.
+     * comic layout, in any proportions.
+     *
+     * A page starts with ONE panel covering the whole page, and there is no
+     * call that adds a panel out of nothing: you make new panels by cutting an
+     * existing one. splitEvenly(id, "horizontal", 3) makes three rows;
+     * split(id, "vertical", 60) makes a 60% / 40% pair; splitAcross(axis,
+     * position) draws a line across the whole page and cuts every panel it
+     * crosses. Each cut panel keeps its id, layers and bubbles as its first
+     * (top/left) part, and the new empty parts are returned, so chain cuts on
+     * what they return: `const [top, bottom] = panels.split(id, "horizontal",
+     * 40); panels.split(bottom.id, "vertical", 50);`. Move a dividing line
+     * afterwards with resize; delete a panel with delete (a neighbour stretches
+     * over its space). See the page namespace for more examples.
+     *
+     * A panel's aspect ratio follows from its rectangle and metadata.pageSize
+     * (see size), so generate artwork at that ratio. The panel array is in the
+     * order the panels were created (the numbers shown on the page): a new
+     * panel is inserted right after the one it was cut from, so it is not
+     * always left-to-right, top-to-bottom. Use x and y to tell where a panel
+     * is.
      */
     panels: {
       /**
@@ -439,7 +480,10 @@ function createComicBuilder(deps: ComicBuilderDeps) {
        * layers are appended on top of the stack; a background layer goes to the
        * bottom (if the panel already has a background, delete it first, or swap
        * its image with update(), since both would be drawn). A layer can start with
-       * only a prompt and get its image later with update(). Foreground images
+       * only a prompt and get its image later with update(). Put the full
+       * image-generation prompt in `prompt` (created before you generate the
+       * image) so the layer records how its art was asked for; see the
+       * continuity guide above. Foreground images
        * should usually be PNGs with a transparent background.
        * @param panelId - The panel id.
        * @param input - { name?, prompt?, mediaId?, src?, aspectRatio?, kind?, visible?, x?, y?, width?, rotation?, opacity? }. The image must be on Google Drive: pass mediaId (from media.upload or media.list, preferred) or src as a Drive URL; any other URL throws. Omit both for a layer that is only a prompt so far. name defaults to the media's name, else "Layer" or "Background". x/y/width are % of panel size and rotation is in degrees; kind defaults to "foreground"; geometry defaults to x:0, y:0, width:100, rotation:0, opacity:1 (0-1), visible:true. aspectRatio (width / height) shapes a layer that has no image yet; use layers.size to see what to generate.
@@ -680,7 +724,10 @@ function createComicBuilder(deps: ComicBuilderDeps) {
      * look (appearance, outfit, distinctive features) plus continuity notes;
      * imageIds point at reference art in metadata.media (upload it with
      * media.upload). An LLM reads a character (description + images) together
-     * with a scene to build image-generation prompts. In update(), imageIds and
+     * with a scene to build image-generation prompts: copy the description
+     * verbatim into every prompt involving the character, and pass its reference
+     * images (media.download) to the generator, so it looks the same on every
+     * page (see the continuity guide above). In update(), imageIds and
      * linkIds replace the existing lists (they are not appended to).
      */
     characters: {
@@ -823,12 +870,23 @@ function createComicBuilder(deps: ComicBuilderDeps) {
       /**
        * Get one media entry.
        * @param id - The media id.
-       * @returns A deep-cloned MediaItem snapshot, or null when not found. Read-only. url is the image's Drive URL; its bytes cannot be fetched without the user's Drive access token, which stays private to the page, so do not try to download it (use page.openPreview() and a screenshot to look at results).
+       * @returns A deep-cloned MediaItem snapshot, or null when not found. Read-only. url is the image's Drive URL, which cannot be fetched without the user's Drive access token (kept private to the page): use media.download(id) to read the image itself.
        */
       get: (id: string): MediaItem | null => {
         const item = requireProject(deps).metadata.media.find((m) => m.id === id);
         return item ? snapshot(item) : null;
       },
+
+      /**
+       * Read a registered image: the bytes of a media file, fetched from Drive
+       * with the app's access token and returned as a data URL. Use it to get
+       * reference images (a character's imageIds, or a layer's mediaId) to pass
+       * to an image generator that accepts reference or input images, so a new
+       * image can match existing art. The counterpart of upload().
+       * @param id - The media id (from media.list, characters.get(id).imageIds, or a layer's mediaId).
+       * @returns A promise resolving to { name, mimeType, dataUrl }. Rejects when the media id is not found or Drive is not connected.
+       */
+      download: (id: string) => deps.downloadStorageMedia(id),
 
       /**
        * Upload image bytes to the current project folder on Drive and register

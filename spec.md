@@ -236,7 +236,9 @@ index)`, `size(panelId, layerId)` (the size to generate the art at: the
 - `metadata` — `get()`, `setOutline(text)`, `setPageSize(pageSize)`
 - `characters` / `scenes` / `objects` — `list/get/create/update/delete`
 - `media` — `list()`, `get(id)`, `upload(name, dataUrl, mimeType)` (data URL
-  → File → Drive upload → registry entry)
+  → File → Drive upload → registry entry) and `download(id)` (the image's
+  bytes from Drive, fetched with the app's token, as `{ name, mimeType,
+dataUrl }`, so an agent can pass reference images to an image generator)
 
 Semantics:
 
@@ -265,9 +267,19 @@ that starts with `{ … }` is kept verbatim). It emits two artifacts:
 
 1. `src/ai/actions.docs.gen.ts` — `ACTION_DOCS`, a path-keyed docs table, and
    `HELP_TEXT`, the rendered reference (gitignored; generated before `tsc`).
-2. `public/llms.txt` — `HELP_TEXT` (conventions + every namespace/function
-   with description, parameters and return value) plus the data model and
-   key URLs. It is **deployed with the site**, next to `index.html`.
+2. `public/llms.txt` — `HELP_TEXT` (the agent guide, conventions, then every
+   namespace/function with description, parameters and return value) plus the
+   data model. It is **deployed with the site**, next to `index.html`.
+
+The agent guide (`scripts/agent-guide.md`) is plain Markdown that the extractor
+prints verbatim before the conventions. It tells the agent that it is the
+**orchestrator** (it directs the work and writes prompts for an image generator
+it calls itself; the app never draws), and how to keep **continuity** across
+pages: read the story bible first, copy character/scene/prop descriptions
+verbatim into prompts, create entries and reference art before the first image,
+get reference images (`imageIds`, `media.list`, `media.download`), reuse assets
+by `mediaId`, record every prompt on its layer, keep backgrounds and characters
+as separate layers, then preview and correct.
 
 At runtime, `src/ai/docs.ts` (`attachDocs`) walks the API object and sets a
 non-enumerable `toString()` on every node with its docs, and

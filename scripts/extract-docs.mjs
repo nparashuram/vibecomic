@@ -37,7 +37,7 @@ const CONVENTIONS = [
   '- A page is a set of panels that tile it, in any proportions; a panel is a',
   '  stack of layers with bubbles on top. Lay a page out with `panels.splitAcross`',
   '  (a line across the whole page), `panels.split` / `splitEvenly` (one panel)',
-  '  and `panels.resize`. A panel has no separate background field: the',
+  '  and `panels.resize` (see the page and panels docs). A panel has no separate background field: the',
   '  background is the layer whose `kind` is `"background"`. It fills the panel,',
   '  sits at the bottom, and is never stretched (a different ratio is cropped).',
   '  Layers are stacked in array order (`layers.move` reorders them).',
@@ -60,10 +60,14 @@ const CONVENTIONS = [
   '  returned id as a layer `mediaId` or a character `imageIds` entry; layers',
   '  reject any other image URL.',
   "- Drive image URLs cannot be opened without the user's Drive access token, which",
-  '  stays private to the page: do not try to download `media.url` or a layer `src`.',
-  '  The page shows the images itself; to look at a result, `page.openPreview()` and',
-  '  take a screenshot. Never invent image URLs.',
+  '  stays private to the page, so do not fetch `media.url` or a layer `src` yourself.',
+  '  To read an image, call `media.download(id)` (it returns a data URL); to look at',
+  '  the result on the page, `page.openPreview()` and take a screenshot. Never invent',
+  '  image URLs.',
 ];
+
+/** The orchestrator role and continuity guidance, kept as plain Markdown. */
+const AGENT_GUIDE = fs.readFileSync(path.join(ROOT, 'scripts', 'agent-guide.md'), 'utf8').trim();
 
 const PAGE_SIZE_PRESET_LINES = readPageSizePresets();
 
@@ -221,6 +225,8 @@ function renderReference({ docs, functions }) {
     'The app exposes this API on `window.ComicBuilder` once it has loaded.',
     'Every UI control calls the same functions: one code path, no drift.',
     'In the browser console (or via automation), start with `ComicBuilder.help()`.',
+    '',
+    AGENT_GUIDE,
     '',
     '## Conventions — read before acting',
     '',

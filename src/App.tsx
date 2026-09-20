@@ -12,6 +12,7 @@ import type { Status } from './components/StatusToast';
 import { getGoogleClientId } from './config';
 import {
   awaitDeviceAccess,
+  downloadFile,
   disconnectDrive,
   ensureProjectFolder,
   hasDriveAccess,
@@ -29,7 +30,7 @@ import { useProjectSaver } from './state/useProjectSaver';
 import type { ComicProject, MediaItem } from './types/comic';
 import { DEFAULT_PAGE_SIZE } from './types/comic';
 import { errorMessage } from './utils/errors';
-import { dataUrlToFile } from './utils/files';
+import { dataUrlToFile, readFileAsDataUrl } from './utils/files';
 import { driveFileUrl } from './utils/driveUrl';
 import { newId } from './utils/id';
 
@@ -229,6 +230,13 @@ export default function App() {
         return (await saver.save())
           ? { ok: true }
           : { ok: false, error: 'Save failed. Check that Drive is still connected.' };
+      },
+
+      downloadStorageMedia: async (id) => {
+        const item = projectRef.current?.metadata.media.find((m) => m.id === id);
+        if (!item) throw new Error(`Media "${id}" not found.`);
+        const dataUrl = await readFileAsDataUrl(await downloadFile(item.driveFileId));
+        return { name: item.name, mimeType: item.mimeType, dataUrl };
       },
 
       uploadStorageMedia: async (name, dataUrl, mimeType) => {
