@@ -1,0 +1,277 @@
+/**
+ * Extract the JSDoc from the `ComicBuilder` object literal in src/ai/actions.ts
+ * and generate:
+ *   - src/ai/actions.docs.gen.ts: ACTION_DOCS (dotted path -> doc string, used
+ *     for per-node toString()) and HELP_TEXT (returned by ComicBuilder.help()).
+ *   - public/llms.txt: HELP_TEXT plus the data model, for AI agents.
+ *
+ * Run before tsc/vite: `node scripts/extract-docs.mjs`. Exits 1 when the source
+ * cannot be parsed so the docs never go silently stale; nodes without JSDoc are
+ * only reported.
+ */
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ACTIONS_TS = path.join(ROOT, 'src', 'ai', 'actions.ts');
+const GEN_TS = path.join(ROOT, 'src', 'ai', 'actions.docs.gen.ts');
+const LLMS_TXT = path.join(ROOT, 'public', 'llms.txt');
+const ROOT_NAME = 'ComicBuilder';
+
+const ts = createRequire(path.join(ROOT, 'package.json'))('typescript');
+
+const CONVENTIONS = [
+  '- Connecting to Drive (needed once per page load) needs a REAL HUMAN CLICK on the connect button:',
+  '  `ComicBuilder.storage.connect()` starts the OAuth flow but browsers block',
+  '  popups from injected scripts, so an agent cannot complete it alone.',
+  '  `ComicBuilder.storage.connectWithDevice()` is the headless alternative.',
+  '- Except for `storage.*` and `help()`, everything needs an open project. Without',
+  '  one, `page.count/select/current` and `layers|bubbles.list/get` return 0 or null,',
+  '  and every other call throws "No project is open". Open one with',
+  '  `storage.openProject` or `storage.createProject`.',
+  '- Reads (`page.select`, `layers.list`, `characters.get`, …) return deep-cloned',
+  '  snapshots: inspect them freely, but mutating a snapshot changes nothing.',
+  '  All writes go through the action functions.',
+  '- A page is a set of panels that tile it, in any proportions; a panel is a',
+  '  stack of layers with bubbles on top. Lay a page out with `panels.splitAcross`',
+  '  (a line across the whole page), `panels.split` / `splitEvenly` (one panel)',
+  '  and `panels.resize`. A panel has no separate background field: the',
+  '  background is the layer whose `kind` is `"background"`. It fills the panel,',
+  '  sits at the bottom, and is never stretched (a different ratio is cropped).',
+  '  Layers are stacked in array order (`layers.move` reorders them).',
+  '- A layer has a `prompt` (what its art should show) and optionally an image.',
+  '  Suggested workflow: `layers.add({ prompt, aspectRatio })`, read',
+  '  `layers.size(panelId, layerId)` for the size to generate at, generate the',
+  '  image, `media.upload` it, then `layers.update(..., { mediaId })`.',
+  '- IMAGE FORMAT: foreground layers should usually be PNGs with a TRANSPARENT',
+  '  background containing only their subject (a character, a prop), so they',
+  '  composite over the background. Generate the background as an opaque image',
+  "  at exactly the panel's aspect ratio: `panels.size(panelId)` (or",
+  '  `layers.size` for the background layer) gives `aspectRatio` and `pixels`.',
+  '- Bubbles always render above all layers. Speech and thought bubbles have a',
+  '  pointer aimed at `tailX`/`tailY`; the text is scaled to fit the bubble.',
+  '- Changes are saved automatically: every minute, and only when something',
+  '  changed. `storage.save()` saves immediately.',
+  '- Drive scope is `drive.file`: the app only sees folders and files IT created.',
+  '  `storage.listProjects()` is the complete project list.',
+  '- All images live on Google Drive. Upload with `media.upload`, then use the',
+  '  returned id as a layer `mediaId` or a character `imageIds` entry; layers',
+  '  reject any other image URL.',
+  "- Drive image URLs cannot be opened without the user's Drive access token, which",
+  '  stays private to the page: do not try to download `media.url` or a layer `src`.',
+  '  The page shows the images itself; to look at a result, `page.openPreview()` and',
+  '  take a screenshot. Never invent image URLs.',
+];
+
+const PAGE_SIZE_PRESET_LINES = readPageSizePresets();
+
+const DATA_MODEL = [
+  '## Data model',
+  '',
+  '- `ComicProject`: `{ id, title, pages[], updatedAt, savedAt, metadata }`: `savedAt` (ISO time of the last save) is required, `updatedAt` optional',
+  '- `ComicPage`: `{ id, number, title, panels[] }`: `number` is 0-based and shown as 0, 1, …',
+  '- `Panel`: `{ id, title?, x, y, width, height, layers[], bubbles[] }`: `x`/`y`/`width`/`height` are % of the page; the panels of a page tile it with no gaps',
+  '- `Layer`: `{ id, name, kind: "background" | "foreground", src, mediaId?, prompt?, aspectRatio?, visible, x, y, width, rotation (degrees), opacity (0-1) }`: `src` is the Google Drive URL of the image (empty while the layer is only a prompt); `aspectRatio` is width / height of its art; `x`/`y`/`width` are % of panel size; aspect ratio preserved, never stretched; layers stack in array order, and a `background` layer fills its panel',
+  '- `Bubble`: `{ id, kind: "speech" | "thought" | "caption", text, x, y, width, height, tailX?, tailY? }`: % of the panel; the text is scaled to fit',
+  '- `ProjectMetadata`: `{ outline, pageSize, characters[], scenes[], objects[], media[] }`',
+  '- `PageSize`: `{ label, widthIn, heightIn }`; the presets (any custom size with positive widthIn/heightIn also works):',
+  ...PAGE_SIZE_PRESET_LINES,
+  '- `Character` / `ComicObject`: `{ id, name, description, imageIds[], sceneIds[] }`',
+  '- `Scene`: `{ id, name, description, characterIds[], imageIds[] }`',
+  '- `MediaItem`: `{ id, name, driveFileId, url, mimeType }`',
+  '',
+  'Machine-readable schema: `schema/comic-project.schema.json` (JSON Schema, draft 2020-12).',
+  '',
+  '## Files served next to the app',
+  '',
+  '- `llms.txt`: this file',
+  '- `schema/comic-project.schema.json`: JSON Schema of the project model',
+];
+
+/** The page size presets, read from src/types/comic.ts so they cannot drift. */
+function readPageSizePresets() {
+  const source = fs.readFileSync(path.join(ROOT, 'src', 'types', 'comic.ts'), 'utf8');
+  const presets = [...source.matchAll(/label: '([^']*)', widthIn: ([\d.]+), heightIn: ([\d.]+)/g)];
+  if (presets.length === 0) throw new Error('extract-docs: no PAGE_SIZE_PRESETS found in comic.ts');
+  return presets.map(
+    ([, label, widthIn, heightIn]) =>
+      `  - \`{ label: '${label}', widthIn: ${widthIn}, heightIn: ${heightIn} }\``
+  );
+}
+
+function commentText(comment) {
+  if (!comment) return '';
+  if (typeof comment === 'string') return comment;
+  return comment.map((part) => part.text ?? '').join('');
+}
+
+/** Source text of a tag, for tags TypeScript would otherwise split into a `{type}` and a comment. */
+function rawTagText(tag, sourceFile) {
+  return tag
+    .getText(sourceFile)
+    .replace(/^@\w+\s*/, '')
+    .split('\n')
+    .map((line) => line.replace(/^\s*\*\s?/, '').trim())
+    .join(' ')
+    .trim();
+}
+
+function readJsDoc(node, sourceFile) {
+  const doc = { description: '', params: [], returns: '' };
+  for (const block of node.jsDoc ?? []) {
+    const description = commentText(block.comment).trim();
+    if (description) doc.description += (doc.description ? '\n' : '') + description;
+    for (const tag of block.tags ?? []) {
+      const tagName = tag.tagName.text;
+      if (tagName === 'param') {
+        const text = commentText(tag.comment)
+          .replace(/^-\s*/, '')
+          .replace(/\s*\n\s*/g, ' ');
+        doc.params.push([tag.name.getText(sourceFile), text.trim()]);
+      } else if (tagName === 'returns' || tagName === 'return') {
+        // `@returns { ok, error? }` parses as a type expression; keep the source text instead.
+        doc.returns = tag.typeExpression
+          ? rawTagText(tag, sourceFile)
+          : commentText(tag.comment).trim();
+      }
+    }
+  }
+  return doc;
+}
+
+function formatDoc({ description, params, returns }) {
+  let out = description;
+  if (params.length) {
+    out += '\n\nParameters:' + params.map(([name, text]) => `\n  * ${name}: ${text}`).join('');
+  }
+  if (returns) out += `\n\nReturns: ${returns}`;
+  return out;
+}
+
+function findRoot(sourceFile) {
+  let found = null;
+  (function walk(node) {
+    if (found) return;
+    if (ts.isVariableStatement(node)) {
+      const [declaration] = node.declarationList.declarations;
+      if (
+        ts.isIdentifier(declaration.name) &&
+        declaration.name.text === ROOT_NAME &&
+        declaration.initializer &&
+        ts.isObjectLiteralExpression(declaration.initializer)
+      ) {
+        found = { statement: node, literal: declaration.initializer };
+        return;
+      }
+    }
+    ts.forEachChild(node, walk);
+  })(sourceFile);
+  return found;
+}
+
+/** Walk the object literal, recording docs by dotted path (in source order). */
+function collectDocs(sourceFile, root) {
+  const docs = new Map();
+  const functions = new Set();
+  const undocumented = [];
+
+  function visit(literal, parentPath) {
+    for (const member of literal.properties) {
+      const isProperty = ts.isPropertyAssignment(member);
+      const isMethod = ts.isMethodDeclaration(member);
+      if (!isProperty && !isMethod && !ts.isShorthandPropertyAssignment(member)) continue;
+
+      const memberPath = `${parentPath}.${member.name.text}`;
+      const doc = readJsDoc(member, sourceFile);
+      if (!doc.description) undocumented.push(memberPath);
+      docs.set(memberPath, formatDoc(doc));
+
+      const value = isProperty ? member.initializer : null;
+      if (value && ts.isObjectLiteralExpression(value)) {
+        visit(value, memberPath);
+      } else if (
+        isMethod ||
+        (value && (ts.isArrowFunction(value) || ts.isFunctionExpression(value))) ||
+        doc.returns ||
+        doc.params.length
+      ) {
+        functions.add(memberPath);
+      }
+    }
+  }
+
+  docs.set(ROOT_NAME, formatDoc(readJsDoc(root.statement, sourceFile)));
+  visit(root.literal, ROOT_NAME);
+  return { docs, functions, undocumented };
+}
+
+/** The skill-style reference: conventions, then one section per namespace. */
+function renderReference({ docs, functions }) {
+  const paths = [...docs.keys()].filter((p) => p !== ROOT_NAME);
+  const isNamespace = (p) => paths.some((other) => other.startsWith(`${p}.`));
+  const depth = (p) => p.split('.').length;
+  const heading = (p) => `### ${p}${functions.has(p) ? '()' : ''}`;
+
+  const lines = [`# ${ROOT_NAME} — AI command API for Comic Builder`, ''];
+  const rootDoc = docs.get(ROOT_NAME);
+  if (rootDoc) lines.push(`> ${rootDoc.replaceAll('\n', '\n> ')}`, '');
+  lines.push(
+    'The app exposes this API on `window.ComicBuilder` once it has loaded.',
+    'Every UI control calls the same functions: one code path, no drift.',
+    'In the browser console (or via automation), start with `ComicBuilder.help()`.',
+    '',
+    '## Conventions — read before acting',
+    '',
+    ...CONVENTIONS,
+    ''
+  );
+
+  const general = paths.filter((p) => depth(p) === 2 && !isNamespace(p));
+  if (general.length) {
+    lines.push('## General', '');
+    for (const p of general) lines.push(heading(p), '', docs.get(p), '');
+  }
+  for (const namespace of paths.filter((p) => depth(p) === 2 && isNamespace(p))) {
+    lines.push(`## ${namespace.split('.')[1]}`, '', docs.get(namespace), '');
+    for (const p of paths.filter((other) => other.startsWith(`${namespace}.`))) {
+      lines.push(heading(p), '', docs.get(p), '');
+    }
+  }
+  return lines.join('\n').trimEnd();
+}
+
+function main() {
+  const sourceFile = ts.createSourceFile(
+    'actions.ts',
+    fs.readFileSync(ACTIONS_TS, 'utf8'),
+    ts.ScriptTarget.ESNext,
+    true
+  );
+  const root = findRoot(sourceFile);
+  if (!root) {
+    console.error(`extract-docs: no \`const ${ROOT_NAME} = {...}\` found in src/ai/actions.ts`);
+    process.exit(1);
+  }
+
+  const collected = collectDocs(sourceFile, root);
+  for (const missing of collected.undocumented) {
+    console.error(`extract-docs: warning: no JSDoc on ${missing}`);
+  }
+  const reference = renderReference(collected);
+
+  fs.writeFileSync(
+    GEN_TS,
+    '// GENERATED by scripts/extract-docs.mjs — do not edit by hand.\n' +
+      '// Source of truth: JSDoc in src/ai/actions.ts.\n' +
+      `export const ACTION_DOCS: Record<string, string> = ${JSON.stringify(Object.fromEntries(collected.docs), null, 2)};\n\n` +
+      `export const HELP_TEXT = ${JSON.stringify(reference)};\n`
+  );
+  fs.writeFileSync(LLMS_TXT, `${reference}\n\n${DATA_MODEL.join('\n')}\n`);
+  console.log(
+    `extract-docs: wrote ${collected.docs.size} entries to ${path.relative(ROOT, GEN_TS)} and ${path.relative(ROOT, LLMS_TXT)}`
+  );
+}
+
+main();

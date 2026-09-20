@@ -1,0 +1,141 @@
+import { useEffect, useState } from 'react';
+import { cb } from '../ai/actions';
+import type { ComicPage, MediaItem, PageSize } from '../types/comic';
+import { formatPageLabel } from '../types/comic';
+import PageSheet from './PageSheet';
+import PanelInspector from './PanelInspector';
+import type { Selection } from './selection';
+
+interface Props {
+  pages: ComicPage[];
+  pageIndex: number;
+  pageSize: PageSize;
+  media: MediaItem[];
+}
+
+function PageButtons({
+  pages,
+  pageIndex,
+  className,
+}: Pick<Props, 'pages' | 'pageIndex'> & { className: string }) {
+  return pages.map((page, index) => (
+    <button
+      key={page.id}
+      title={page.title}
+      className={`btn btn-sm ${index === pageIndex ? 'btn-dark' : 'btn-outline-secondary'} ${className}`}
+      onClick={() => cb().page.select(index)}
+    >
+      {page.number}
+    </button>
+  ));
+}
+
+function AddPageButton({ className }: { className: string }) {
+  return (
+    <button
+      className={`btn btn-sm btn-outline-primary ${className}`}
+      title="Add page"
+      aria-label="Add page"
+      onClick={() => cb().page.add()}
+    >
+      +
+    </button>
+  );
+}
+
+/** Page number rail (left on desktop, footer on mobile), the selected page, and the inspector of its highlighted panel. */
+export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
+  const [selection, setSelection] = useState<Selection>({ panelId: null });
+
+  const page = pages[pageIndex];
+  const panels = page?.panels ?? [];
+  // A page with a single panel always has it highlighted.
+  const panel =
+    panels.find((p) => p.id === selection.panelId) ?? (panels.length === 1 ? panels[0] : undefined);
+  const current: Selection = {
+    panelId: panel?.id ?? null,
+    layerId: panel?.layers.some((l) => l.id === selection.layerId) ? selection.layerId : undefined,
+    bubbleId: panel?.bubbles.some((b) => b.id === selection.bubbleId)
+      ? selection.bubbleId
+      : undefined,
+  };
+
+  // Delete or Backspace removes the selected layer or bubble (unless typing in a field).
+  const panelId = panel?.id;
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+      if ((event.target as HTMLElement).closest('input, textarea, select, [contenteditable]'))
+        return;
+      if (!panelId) return;
+      if (current.layerId) cb().layers.delete(panelId, current.layerId);
+      else if (current.bubbleId) cb().bubbles.delete(panelId, current.bubbleId);
+      else return;
+      event.preventDefault();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [panelId, current.layerId, current.bubbleId]);
+
+  return (
+    <div className="d-flex flex-column flex-grow-1" style={{ minHeight: 0 }}>
+      <div className="d-flex flex-grow-1" style={{ minHeight: 0 }}>
+        <div
+          className="d-none d-md-flex flex-column border-end bg-white py-2"
+          style={{ width: 64, flexShrink: 0 }}
+        >
+          <div
+            className="d-flex flex-column flex-grow-1"
+            style={{ minHeight: 0, overflowY: 'auto' }}
+          >
+            <PageButtons pages={pages} pageIndex={pageIndex} className="mx-2 mb-1 px-0" />
+          </div>
+          <AddPageButton className="mx-2 mt-2 px-0" />
+        </div>
+
+        <main
+          className="flex-grow-1 d-flex flex-column flex-md-row"
+          style={{ minWidth: 0, minHeight: 0 }}
+        >
+          {page ? (
+            <>
+              <section
+                className="flex-grow-1 d-flex flex-column"
+                style={{ minWidth: 0, minHeight: 0 }}
+              >
+                <h2 className="h6 px-3 pt-2 mb-0 text-truncate">{formatPageLabel(page)}</h2>
+                <PageSheet
+                  page={page}
+                  pageSize={pageSize}
+                  editing={{ selection: current, onSelect: setSelection }}
+                />
+              </section>
+              <aside className="inspector col-md-4 col-xl-3 bg-white border-top overflow-auto">
+                {panel ? (
+                  <PanelInspector
+                    page={page}
+                    panel={panel}
+                    media={media}
+                    selection={current}
+                    onSelect={setSelection}
+                  />
+                ) : (
+                  <p className="text-muted p-3 mb-0">No panel selected</p>
+                )}
+              </aside>
+            </>
+          ) : (
+            <p className="text-muted p-3">No pages yet.</p>
+          )}
+        </main>
+      </div>
+
+      <div className="d-md-none d-flex align-items-center gap-2 border-top bg-white py-2 px-3">
+        <div className="d-flex flex-grow-1 gap-2" style={{ minWidth: 0, overflowX: 'auto' }}>
+          <PageButtons pages={pages} pageIndex={pageIndex} className="px-3 flex-shrink-0" />
+        </div>
+        <AddPageButton className="px-3 flex-shrink-0" />
+      </div>
+    </div>
+  );
+}

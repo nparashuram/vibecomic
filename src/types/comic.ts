@@ -1,0 +1,167 @@
+export type LayerKind = 'background' | 'foreground';
+export type BubbleKind = 'speech' | 'thought' | 'caption';
+
+export interface Layer {
+  id: string;
+  name: string;
+  kind: LayerKind;
+  /**
+   * Google Drive URL of the layer's image (images are never stored anywhere
+   * else), or '' while the layer has none yet: a layer can start as just a prompt.
+   */
+  src: string;
+  /** Id of the MediaItem this layer's artwork came from. */
+  mediaId?: string;
+  /** What the art shows: the prompt an image model is given, or a plain description. */
+  prompt?: string;
+  /**
+   * Width / height of the layer's artwork. Shapes a layer that has no image
+   * yet and tells whoever generates the art what proportions to use.
+   */
+  aspectRatio?: number;
+  visible: boolean;
+  /**
+   * Position and width, as percentages of the panel size (height follows the
+   * image's aspect ratio). Ignored for a background layer, which always fills
+   * the panel.
+   */
+  x: number;
+  y: number;
+  width: number;
+  rotation: number;
+  opacity: number;
+}
+
+export interface Bubble {
+  id: string;
+  kind: BubbleKind;
+  text: string;
+  /** Top-left corner, width and height, as percentages of the panel. The text is scaled to fit. */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Where the pointer's tip aims, as percentages of the panel size. Captions have none. */
+  tailX?: number;
+  tailY?: number;
+}
+
+export interface Panel {
+  id: string;
+  title?: string;
+  /**
+   * Position and size as percentages of the page. Panels tile the page, so a
+   * panel's aspect ratio follows from its rectangle and the page size.
+   */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /**
+   * Composited bottom-to-top in array order, so array order is the stacking
+   * order. There is no separate background field: the background is the layer
+   * whose `kind` is "background".
+   */
+  layers: Layer[];
+  /** Always rendered above all layers. */
+  bubbles: Bubble[];
+}
+
+export interface ComicPage {
+  id: string;
+  /** Zero-based page index, displayed as 0, 1, 2, ... */
+  number: number;
+  title: string;
+  panels: Panel[];
+}
+
+/** One file in the project's media registry (lives in the Drive project folder). */
+export interface MediaItem {
+  id: string;
+  name: string;
+  driveFileId: string;
+  /** Drive URL for the file; fetching its bytes needs a valid Drive access token. */
+  url: string;
+  /** e.g. "image/png" */
+  mimeType: string;
+}
+
+/** Shared shape of the story-bible entries: visual description plus reference art. */
+interface StoryEntry {
+  id: string;
+  name: string;
+  /** Appearance and continuity notes an LLM reads to build image-generation prompts. */
+  description: string;
+  /** MediaItem ids of the reference art. */
+  imageIds: string[];
+}
+
+export interface Character extends StoryEntry {
+  /** Scenes this character appears in. */
+  sceneIds: string[];
+}
+
+export interface ComicObject extends StoryEntry {
+  /** Scenes where the object appears. */
+  sceneIds: string[];
+}
+
+export interface Scene extends StoryEntry {
+  /** Characters that appear in this scene. */
+  characterIds: string[];
+}
+
+/** Physical page dimensions, chosen when the project is created. */
+export interface PageSize {
+  /** Preset label, e.g. 'US Comic (6.625" × 10.25")'. */
+  label: string;
+  widthIn: number;
+  heightIn: number;
+}
+
+export interface ProjectMetadata {
+  outline: string;
+  pageSize: PageSize;
+  characters: Character[];
+  scenes: Scene[];
+  objects: ComicObject[];
+  media: MediaItem[];
+}
+
+export interface ComicProject {
+  id: string;
+  title: string;
+  pages: ComicPage[];
+  updatedAt: string;
+  /** ISO timestamp of the last successful write to Drive. */
+  savedAt: string;
+  metadata: ProjectMetadata;
+}
+
+export const PAGE_SIZE_PRESETS: PageSize[] = [
+  { label: 'US Comic (6.625" × 10.25")', widthIn: 6.625, heightIn: 10.25 },
+  { label: 'US Trade (6" × 9")', widthIn: 6, heightIn: 9 },
+  { label: 'Manga B5 (6.93" × 9.84")', widthIn: 6.93, heightIn: 9.84 },
+  { label: 'A4 (8.27" × 11.69")', widthIn: 8.27, heightIn: 11.69 },
+  { label: 'Square (8" × 8")', widthIn: 8, heightIn: 8 },
+  { label: 'Portrait 4:5 (8" × 10")', widthIn: 8, heightIn: 10 },
+  { label: 'Landscape 16:9 (12" × 6.75")', widthIn: 12, heightIn: 6.75 },
+];
+
+export const DEFAULT_PAGE_SIZE: PageSize = PAGE_SIZE_PRESETS[0];
+
+export function blankMetadata(pageSize: PageSize = DEFAULT_PAGE_SIZE): ProjectMetadata {
+  return {
+    outline: '',
+    pageSize: { ...pageSize },
+    characters: [],
+    scenes: [],
+    objects: [],
+    media: [],
+  };
+}
+
+/** "Page 3 — Title", or just "Page 3" for an untitled page. */
+export function formatPageLabel(page: ComicPage): string {
+  return page.title ? `Page ${page.number} — ${page.title}` : `Page ${page.number}`;
+}

@@ -1,0 +1,355 @@
+/* Comic Builder — custom CSS is only for the comic canvas (page, panels,
+   layers, bubbles) and the editor layout Bootstrap utilities cannot express.
+   All other app chrome uses Bootstrap classes. */
+
+/* ---- Page ---------------------------------------------------------------- */
+
+/* Sizes the page sheet to the largest rectangle of its ratio that fits. */
+.page-area {
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+  padding: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  container-type: size;
+}
+
+.page-sheet {
+  position: relative;
+  aspect-ratio: var(--page-ratio);
+  width: min(100cqw, calc(100cqh * var(--page-ratio)));
+  background: #fff;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.3);
+  container-type: inline-size;
+  user-select: none;
+}
+
+.page-sheet.editing {
+  touch-action: none;
+}
+
+.page-panel {
+  position: absolute;
+  padding: 0.6cqw;
+}
+
+.panel-canvas {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #fafafa;
+  border: max(1px, 0.3cqw) solid #111;
+}
+
+/* The highlighted panel (drawn last) shows anything that spills out of it, so a large layer's handles stay reachable. */
+.page-panel.selected .panel-canvas {
+  overflow: visible;
+  outline: 3px solid #0d6efd;
+  outline-offset: -1px;
+}
+
+/* First child of the canvas and without a z-index, so layers and bubbles paint over it. */
+.panel-number {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: rgba(13, 110, 253, 0.9);
+  color: #fff;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.panel-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9aa3b8;
+  font-size: 13px;
+  pointer-events: none;
+}
+
+.split-guide {
+  position: absolute;
+  z-index: 12;
+  pointer-events: none;
+  border: 0 dashed #0d6efd;
+}
+
+.split-guide.horizontal {
+  border-top-width: 3px;
+}
+
+.split-guide.vertical {
+  border-left-width: 3px;
+}
+
+.split-guide.invalid {
+  border-color: #dc3545;
+}
+
+/* A cut across the whole page, extending a little into the margin the cursor is in. */
+.split-guide.across.horizontal {
+  left: -20px;
+  width: calc(100% + 40px);
+  border-top-width: 2px;
+}
+
+.split-guide.across.vertical {
+  top: -20px;
+  height: calc(100% + 40px);
+  border-left-width: 2px;
+}
+
+/* Above panel content, below the selected layer and bubbles (whose handles must win). */
+.divider-handle {
+  position: absolute;
+  z-index: 3;
+  touch-action: none;
+}
+
+.divider-handle.vertical {
+  width: 20px;
+  margin-left: -10px;
+  cursor: col-resize;
+}
+
+.divider-handle.horizontal {
+  height: 20px;
+  margin-top: -10px;
+  cursor: row-resize;
+}
+
+.divider-handle::after {
+  content: '';
+  position: absolute;
+  background: rgba(13, 110, 253, 0);
+}
+
+.-handle.vertical::after {
+  inset: 0 8px;
+}
+
+.divider-handle.horizontal::after {
+  inset: 8px 0;
+}
+
+.divider-handle:hover::after {
+  background: rgba(13, 110, 253, 0.7);
+}
+
+/* Beside the page a horizontal cut is offered, above or below it a vertical one. */
+.page-area.cut-horizontal {
+  cursor: row-resize;
+}
+
+.page-area.cut-vertical {
+  cursor: col-resize;
+}
+
+/* ---- Layers and bubbles -------------------------------------------------
+   Only the highlighted panel uses z-index (selected layer 4, bubbles 5, pointers 6, handles 12),
+   and it is painted last, so its content always sits above every other panel's canvas, number
+   and bubbles. Elsewhere, DOM order stacks number, layers, then bubbles. */
+
+.panel-layer {
+  position: absolute;
+  max-width: none;
+}
+
+/* A background fills its panel, cropped rather than stretched. */
+.panel-layer.background {
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* A foreground layer: a box whose height follows its image. */
+.panel-layer-box {
+  position: absolute;
+}
+
+.panel-layer-box .panel-layer {
+  position: static;
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.panel-layer-box.selected {
+  z-index: 4;
+  outline: 2px solid #0d6efd;
+  cursor: move;
+  touch-action: none;
+}
+
+.layer-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px;
+  overflow: hidden;
+  border: 2px dashed #6c757d;
+  background: rgba(255, 255, 255, 0.5);
+  color: #6c757d;
+  font-size: 11px;
+  text-align: center;
+}
+
+.rotate-handle {
+  position: absolute;
+  z-index: 12;
+  top: -30px;
+  left: 50%;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  border: 2px solid #0d6efd;
+  border-radius: 50%;
+  background: #fff;
+  cursor: grab;
+  touch-action: none;
+}
+
+/* A stem joining the handle to the box. */
+.rotate-handle::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 2px;
+  height: 12px;
+  margin-left: -1px;
+  background: #0d6efd;
+}
+
+.resize-handle {
+  position: absolute;
+  z-index: 12;
+  width: 14px;
+  height: 14px;
+  margin: -7px;
+  border: 2px solid #0d6efd;
+  border-radius: 3px;
+  background: #fff;
+  touch-action: none;
+}
+
+.resize-handle.nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.resize-handle.ne {
+  top: 0;
+  left: 100%;
+  cursor: nesw-resize;
+}
+
+.resize-handle.sw {
+  top: 100%;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.resize-handle.se {
+  top: 100%;
+  left: 100%;
+  cursor: nwse-resize;
+}
+
+/* Font size and padding are set from the bubble's size so the text always fits. */
+.bubble {
+  position: absolute;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #111;
+  border-radius: 14px;
+  background: #fff;
+  color: #111;
+  line-height: 1.15;
+  text-align: center;
+}
+
+.bubble-text {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.bubble.thought {
+  border-style: dashed;
+  border-radius: 50%;
+}
+
+.bubble.caption {
+  justify-content: flex-start;
+  border-radius: 4px;
+  background: #fdf3d8;
+  font-style: italic;
+  text-align: left;
+}
+
+.bubble.editable {
+  cursor: move;
+  touch-action: none;
+}
+
+.bubble.selected {
+  box-shadow: 0 0 0 3px #0d6efd;
+}
+
+.bubble-pointer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.page-panel.selected .bubble {
+  z-index: 5;
+}
+
+.page-panel.selected .bubble-pointer {
+  z-index: 6;
+}
+
+.tail-handle {
+  position: absolute;
+  z-index: 12;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  background: #0d6efd;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+  touch-action: none;
+}
+
+/* ---- Editor layout ------------------------------------------------------- */
+
+/* Below the page on mobile, beside it on desktop. */
+.inspector {
+  max-height: 40vh;
+}
+
+@media (min-width: 768px) {
+  .inspector {
+    max-height: none;
+    border-left: 1px solid var(--bs-border-color);
+  }
+}

@@ -1,0 +1,869 @@
+/**
+ * The window.ComicBuilder command API: a CLI for the whole Comic Builder UI.
+ *
+ * Every UI control calls these same functions, so a human's clicks and an AI
+ * agent's calls share one code path. The JSDoc on every node of the
+ * `ComicBuilder` literal below is the single source of truth for the docs:
+ * scripts/extract-docs.mjs turns it into src/ai/actions.docs.gen.ts (attached
+ * as each node's toString() and rendered by ComicBuilder.help()) and
+ * public/llms.txt.
+ */
+
+import type { DeviceCodeInfo, ProjectFolder } from '../drive/driveClient';
+import { createPanel, defaultPointer } from '../state/layout';
+import { assertValidProject, normalizeProject } from '../state/project';
+import type { Bubble, ComicPage, ComicProject, Layer, MediaItem, PageSize } from '../types/comic';
+import { errorMessage } from '../utils/errors';
+import { newId } from '../utils/id';
+import { ACTION_DOCS, HELP_TEXT } from './actions.docs.gen';
+import {
+  BUBBLE_KINDS,
+  LAYER_KINDS,
+  LAYER_MOVES,
+  artSize,
+  assertKind,
+  definedFields,
+  findPanel,
+  mutate,
+  panelItemsApi,
+  panelsApi,
+  requirePanel,
+  requireProject,
+  resolveLayerImage,
+  snapshot,
+  storyApi,
+} from './builders';
+import type {
+  ActionResult,
+  BubbleInput,
+  BubblePatch,
+  ComicBuilderDeps,
+  LayerInput,
+  LayerPatch,
+} from './deps';
+import { attachDocs } from './docs';
+
+declare global {
+  interface Window {
+    ComicBuilder?: ComicBuilderApi;
+  }
+}
+
+/** Build the ComicBuilder action tree bound to the given deps. */
+function createComicBuilder(deps: ComicBuilderDeps) {
+  const layers = panelItemsApi(deps, 'layers', 'Layer');
+  const bubbles = panelItemsApi(deps, 'bubbles', 'Bubble');
+  const panels = panelsApi(deps);
+  const characters = storyApi(deps, 'characters');
+  const scenes = storyApi(deps, 'scenes');
+  const objects = storyApi(deps, 'objects');
+
+  /**
+   * Top-level command API for Comic Builder: every UI control calls these same
+   * functions (one code path, no drift). Namespaces: storage (Drive OAuth,
+   * project folders, project.json IO), project (whole-project replace), page
+   * (navigation, preview, adding pages), panels (page layout), layers, bubbles,
+   * metadata (story bible), characters, scenes, objects, media. Reads return
+   * deep-cloned snapshots. Changes are saved to Drive automatically within a
+   * minute (only when something changed); storage.save() saves immediately.
+   * Everything except storage and help() needs an open project: without one,
+   * page.count/select/current and layers/bubbles list/get return 0 or null, and
+   * every other call throws "No project is open".
+   */
+  const ComicBuilder = {
+    /**
+     * Render the full skill-style reference for this API: conventions plus every namespace and function with its description, parameters, and return value. This text is generated at build time from the JSDoc in src/ai/actions.ts, so it never drifts from the code.
+     * @returns The complete API reference as plain text.
+     */
+    help: (): string => HELP_TEXT,
+
+    /**
+     * Google Drive storage: OAuth, project folders, and project.json IO.
+     * Drive is the only project store. Scope is drive.file, so the app only
+     * sees folders and files it created — listProjects() is the complete list.
+     */
+    storage: {
+      /**
+       * Start the Google Drive OAuth flow (GIS popup).
+       * MUST be called from a real human click: browsers block OAuth popups
+       * from injected scripts, so an agent calling this alone cannot complete
+       * the flow. Ask the user to click the "Connect with Google Drive" button.
+       * The promise resolves when the popup flow finishes, whether or not it
+       * succeeded (a failure shows as a message in the app and does not reject),
+       * so check storage.status().connected afterwards. The token is kept only in
+       * page memory: reloading the page drops it, and connecting again shows
+       * Google's consent popup again.
+       * @returns A promise that resolves when the popup flow has finished; check storage.status().connected.
+       */
+      connect: (): Promise<void> => deps.connectStorage(),
+
+      /**
+       * Start the Google Drive OAuth device flow — for headless browsers
+       * and AI assistants that cannot complete the GIS popup.
+       * Resolves promptly with { url, code, expiresInSeconds }: show the
+       * user the URL and code (they open the URL on any device — a phone
+       * works — enter the code, and approve). Then poll storage.status()
+       * until connected is true and continue. If the user denies the request or
+       * the code expires, status().connected simply stays false (the app shows
+       * the reason). Rejects immediately if the device client is not configured.
+       * Works from injected scripts: no popup, no user gesture needed.
+       * The device client secret ships in the app bundle by design
+       * (Google's device-client model: distributed apps cannot keep
+       * secrets; scope stays limited to drive.file, and the access token
+       * itself is memory-only).
+       * @returns The verification URL, user code, and code expiry.
+       */
+      connectWithDevice: (): Promise<DeviceCodeInfo> => deps.connectStorageWithDevice(),
+
+      /**
+       * Disconnect Drive: save any unsaved changes, then revoke the grant at
+       * Google and return to the connect screen. Full sign-out — the next
+       * connect asks for permission again. (Reloading the page alone does NOT
+       * revoke the grant; it only drops the in-memory token.)
+       * @returns A promise that resolves when disconnection is complete.
+       */
+      disconnect: (): Promise<void> => deps.disconnectStorage(),
+
+      /**
+       * Report Drive connection state.
+       * @returns { connected, configured }: connected means an unexpired token is in memory; configured means a Google OAuth client ID is set.
+       */
+      status: (): { connected: boolean; configured: boolean } => deps.getStorageStatus(),
+
+      /**
+       * List every project folder this app created on Drive (files.list under
+       * the drive.file scope), sorted by name, at most 100. The app is blind to
+       * everything else on the user's Drive.
+       * @returns A promise resolving to [{ id, name }] of project folders.
+       */
+      listProjects: (): Promise<ProjectFolder[]> => deps.listStorageProjects(),
+
+      /**
+       * Create a new project and open it: create a Drive folder named after the
+       * project, write a blank project.json (a cover page with one panel, empty
+       * metadata) into it, and show it in the editor. If a folder with that name
+       * already exists, its project is opened instead and nothing is overwritten.
+       * The project appears in listProjects().
+       * @param name - The project name; becomes the Drive folder name.
+       * @param pageSize - Optional { label, widthIn, heightIn } physical page
+       *   dimensions (see the page size presets in the data model). Defaults to
+       *   US Comic (6.625" × 10.25").
+       * @returns A promise resolving to { id, name } of the new folder.
+       */
+      createProject: (name: string, pageSize?: PageSize): Promise<ProjectFolder> =>
+        deps.createStorageProject(name, pageSize),
+
+      /**
+       * Open a project: load the folder's project.json into the editor. A
+       * project with only its cover opens on the Outline tab; one with more
+       * pages opens on the Pages tab.
+       * @param idOrName - The folder id from listProjects(), or the project/folder name.
+       * @returns A promise resolving to { ok, error? }.
+       */
+      openProject: async (idOrName: string): Promise<ActionResult> => {
+        const folders = await deps.listStorageProjects();
+        const match =
+          folders.find((f) => f.id === idOrName) ?? folders.find((f) => f.name === idOrName);
+        return match
+          ? deps.openStorageProject(match)
+          : { ok: false, error: `No project folder "${idOrName}".` };
+      },
+
+      /**
+       * Close the current project: save any unsaved changes, drop it from the
+       * editor and return to the project tiles. If saving fails the project
+       * stays open. Does not delete anything on Drive.
+       * @returns A promise that resolves once the project is closed or saving has failed.
+       */
+      closeProject: (): Promise<void> => deps.closeStorageProject(),
+
+      /**
+       * Go back to the project tiles page, refreshing the folder list.
+       * The current project (if any) stays open in the background.
+       * @returns A promise resolving to [{ id, name }] of project folders.
+       */
+      showProjects: (): Promise<ProjectFolder[]> => deps.showProjectTiles(),
+
+      /**
+       * Save to Drive right now. The app already saves by itself every minute
+       * when there are changes; this only hurries it. Does nothing when
+       * everything is already saved. Fails ({ ok: false }) when no project is
+       * open or Drive is not connected.
+       * @returns A promise resolving to { ok, error? }: ok is true when nothing is left unsaved.
+       */
+      save: (): Promise<ActionResult> => deps.flushStorageSave(),
+    },
+
+    /**
+     * Whole-project operations on the currently open project.
+     */
+    project: {
+      /**
+       * Replace the whole open project with validated JSON (object or JSON string).
+       * Validation follows public/schema/comic-project.schema.json; the error
+       * names the failing path (e.g. project.pages[2].panels[0].layers[1]).
+       * Required: id, title, savedAt, pages and metadata (outline, characters,
+       * scenes, objects, media). Layer images must be Google Drive URLs (or empty).
+       * This is the primary editing path for bulk changes: read snapshots via
+       * page/panels/layers/bubbles/metadata, modify client-side, load the result.
+       * Geometry (x/y/width/rotation/opacity) is preserved exactly. Pages
+       * without panels get one full-page panel, panels without a rectangle are
+       * stacked as equal rows, and bubbles without a height get 20. The editor
+       * returns to page 0.
+       * @param data - A ComicProject object or its JSON string.
+       * @returns { ok, error? }.
+       */
+      load: (data: ComicProject | string): ActionResult => {
+        try {
+          const parsed: unknown =
+            typeof data === 'string' ? JSON.parse(data) : structuredClone(data);
+          assertValidProject(parsed);
+          normalizeProject(parsed);
+          deps.replaceProject(parsed);
+          deps.setStatus(`Project "${parsed.title}" loaded.`);
+          return { ok: true };
+        } catch (e) {
+          return { ok: false, error: errorMessage(e) };
+        }
+      },
+    },
+
+    /**
+     * Page navigation, preview and page creation for the open project.
+     */
+    page: {
+      /**
+       * Show page i and return it. Pages are 0-based and displayed as 0, 1, 2, …
+       * @param i - 0-based page index.
+       * @returns A deep-cloned ComicPage snapshot (panels with layers and bubbles), or null when i is out of range or no project is open. Snapshots are read-only: mutating them changes nothing.
+       */
+      select: (i: number): ComicPage | null => {
+        const project = deps.getProject();
+        if (!project || !Number.isInteger(i) || i < 0 || i >= project.pages.length) return null;
+        deps.setPageIndex(i);
+        return snapshot(project.pages[i]);
+      },
+
+      /**
+       * Number of pages in the open project.
+       * @returns The page count, or 0 when no project is open.
+       */
+      count: (): number => deps.getProject()?.pages.length ?? 0,
+
+      /**
+       * The currently shown page.
+       * @returns A deep-cloned ComicPage snapshot, or null when no project is open. Read-only.
+       */
+      current: (): ComicPage | null => {
+        const project = deps.getProject();
+        return project ? snapshot(project.pages[deps.getPageIndex()] ?? null) : null;
+      },
+
+      /**
+       * Append a new page after the last page and show it. It starts with one
+       * empty panel covering the whole page; cut it up with panels.splitAcross,
+       * panels.split or panels.splitEvenly.
+       * @param input - Optional { title } for the page. Defaults to an empty title.
+       * @returns A deep-cloned snapshot of the new ComicPage (with its single panel).
+       */
+      add: (input?: { title?: string }): ComicPage => {
+        const page: ComicPage = {
+          id: newId('page'),
+          number: 0,
+          title: input?.title ?? '',
+          panels: [createPanel()],
+        };
+        deps.updateProject((p) => {
+          page.number = p.pages.length;
+          p.pages.push(page);
+        });
+        deps.setPageIndex(page.number);
+        return snapshot(page);
+      },
+
+      /**
+       * Open preview mode: the current page shown on its own on a dark background,
+       * without editing controls, for visual review. An agent can screenshot the
+       * preview and show it to the user.
+       */
+      openPreview: (): void => deps.setPreview(true),
+
+      /**
+       * Close preview mode and return to the editor.
+       */
+      closePreview: (): void => deps.setPreview(false),
+    },
+
+    /**
+     * The panels of a page. Panels are rectangles (x, y, width, height in % of
+     * the page) that always tile the page with no gaps or overlaps, like a
+     * comic layout, in any proportions. A page starts with one panel; cut it up
+     * with splitAcross / split / splitEvenly and move the dividing lines with
+     * resize. A panel's aspect ratio follows from its rectangle and
+     * metadata.pageSize (see size), so generate artwork at that ratio. The panel
+     * array is in the order the panels were created (the numbers shown on the
+     * page): a new panel is inserted right after the one it was cut from, so it
+     * is not always left-to-right, top-to-bottom. Use x and y to tell where a
+     * panel is.
+     */
+    panels: {
+      /**
+       * List the panels of a page in array order (the numbers shown on the page).
+       * See the panels namespace note: use x and y for position.
+       * @param pageIndex - 0-based page index. Defaults to the current page.
+       * @returns Deep-cloned Panel snapshots (with rectangle, layers and bubbles). Read-only.
+       */
+      list: panels.list,
+
+      /**
+       * Get one panel.
+       * @param panelId - The panel id.
+       * @returns A deep-cloned Panel snapshot, or null when not found. Read-only.
+       */
+      get: panels.get,
+
+      /**
+       * The physical size of a panel on the printed page, from its rectangle
+       * and the page size, and the pixel size to generate art at (150 dpi,
+       * longest side at most 2048). A panel's background is best generated at
+       * exactly this size and aspect ratio, so nothing is cropped or stretched.
+       * @param panelId - The panel id.
+       * @returns { widthIn, heightIn, aspectRatio, pixels: { width, height } }, or null when the panel is not found.
+       */
+      size: panels.size,
+
+      /**
+       * Cut a panel in two along one straight line. The original panel keeps
+       * its id, layers and bubbles and becomes the top (horizontal) or left
+       * (vertical) part; a new empty panel fills the rest. Layer and bubble
+       * positions are percentages of their panel, so they scale with it.
+       * Throws when either part would be smaller than 5% of the page.
+       * @param panelId - The panel to cut.
+       * @param axis - "horizontal" draws a horizontal line (top and bottom parts); "vertical" a vertical line (left and right parts).
+       * @param position - Where the line falls, as a percentage (0-100) of the panel's height (horizontal) or width (vertical). Defaults to 50.
+       * @returns The resulting panels: the original, then the new one.
+       */
+      split: panels.split,
+
+      /**
+       * Draw a straight line across the whole page and cut every panel it
+       * crosses, like a guide: splitAcross("horizontal", 50) cuts the page into
+       * a top and a bottom tier, cutting each panel the line passes through.
+       * Each cut panel keeps its id, layers and bubbles as its first (top/left)
+       * part; the new parts are empty. Panels the line misses or only touches
+       * at an edge, and panels that would be left too small, are not cut.
+       * Throws when nothing is cut.
+       * @param axis - "horizontal" draws a horizontal line (cutting panels into top and bottom parts); "vertical" a vertical line (left and right parts).
+       * @param position - Where the line falls, as a percentage (0-100) of the page height (horizontal) or width (vertical).
+       * @param pageIndex - 0-based page index. Defaults to the current page.
+       * @returns All panels of the page after the cut.
+       */
+      splitAcross: panels.splitAcross,
+
+      /**
+       * Cut a panel into equal parts, e.g. three horizontal panels with
+       * splitEvenly(id, "horizontal", 3). The original keeps its id, layers and
+       * bubbles as the first part; the others are new and empty.
+       * @param panelId - The panel to cut.
+       * @param axis - "horizontal" for stacked rows, "vertical" for side-by-side columns.
+       * @param count - Number of parts, at least 2.
+       * @returns The resulting panels: the original first, then the new ones.
+       */
+      splitEvenly: panels.splitEvenly,
+
+      /**
+       * Move one edge of a panel, i.e. drag a dividing line. The panels on the
+       * other side of the line move with it so the page stays tiled: a
+       * horizontal line spans the page and moves as one, while a vertical line
+       * moves only the panels that touch it end to end (each row of panels has
+       * its own vertical lines). The edge stops at the minimum panel size (5% of
+       * the page); the outer edges of the page cannot be moved.
+       * @param panelId - A panel touching the line.
+       * @param edge - Which edge of that panel to move: "top", "bottom", "left" or "right".
+       * @param position - The new position of the line, as a percentage (0-100) of the page height (top/bottom) or width (left/right).
+       * @returns All panels of the page after the move.
+       */
+      resize: panels.resize,
+
+      /**
+       * Update a panel's title.
+       * @param panelId - The panel id.
+       * @param patch - { title? }.
+       * @returns A deep-cloned snapshot of the updated Panel. Throws when not found.
+       */
+      update: panels.update,
+
+      /**
+       * Delete a panel. The neighbouring panel or panels that exactly cover one
+       * of its edges stretch over its space; if none do, the space stays empty.
+       * Its layers and bubbles are deleted with it. A page always keeps at least
+       * one panel (throws when deleting the last one).
+       * @param panelId - The panel id.
+       * @returns True when a panel was removed, false when not found.
+       */
+      delete: panels.delete,
+    },
+
+    /**
+     * Layers inside a panel, addressed by panel id (see the id fields of the
+     * ComicPage snapshot from page.select). Layers composite bottom-to-top in
+     * array order, so array order is the stacking order (see move). There is no
+     * separate background field: the background is the layer whose kind is
+     * "background"; it fills the whole panel without stretching (an image of a
+     * different ratio is cropped), so its x/y/width are ignored. Generate it at
+     * the size panels.size or layers.size reports. A panel should have one
+     * background. Every other layer is a foreground layer, usually a PNG with a
+     * transparent background containing just its subject (a character, a prop),
+     * placed over the background. A layer has a prompt: what its art should
+     * show, for whoever generates the image. It may exist with only a prompt
+     * and get its image later.
+     */
+    layers: {
+      /**
+       * List the layers of a panel, bottom-to-top.
+       * @param panelId - The panel id.
+       * @returns Deep-cloned Layer snapshots, or null when the panel is not found. Read-only.
+       */
+      list: layers.list,
+
+      /**
+       * Get one layer.
+       * @param panelId - The panel id.
+       * @param layerId - The layer id.
+       * @returns A deep-cloned Layer snapshot, or null when not found. Read-only.
+       */
+      get: layers.get,
+
+      /**
+       * Add a layer to a panel: a prompt, an image, or both. Foreground
+       * layers are appended on top of the stack; a background layer goes to the
+       * bottom (if the panel already has a background, delete it first, or swap
+       * its image with update(), since both would be drawn). A layer can start with
+       * only a prompt and get its image later with update(). Foreground images
+       * should usually be PNGs with a transparent background.
+       * @param panelId - The panel id.
+       * @param input - { name?, prompt?, mediaId?, src?, aspectRatio?, kind?, visible?, x?, y?, width?, rotation?, opacity? }. The image must be on Google Drive: pass mediaId (from media.upload or media.list, preferred) or src as a Drive URL; any other URL throws. Omit both for a layer that is only a prompt so far. name defaults to the media's name, else "Layer" or "Background". x/y/width are % of panel size and rotation is in degrees; kind defaults to "foreground"; geometry defaults to x:0, y:0, width:100, rotation:0, opacity:1 (0-1), visible:true. aspectRatio (width / height) shapes a layer that has no image yet; use layers.size to see what to generate.
+       * @returns A deep-cloned snapshot of the new Layer.
+       */
+      add: (panelId: string, input: LayerInput): Layer => {
+        const kind = input.kind ?? 'foreground';
+        assertKind(kind, LAYER_KINDS, 'Layer kind');
+        const project = requireProject(deps);
+        const image = resolveLayerImage(project, input);
+        const media = project.metadata.media.find((m) => m.id === image.mediaId);
+        return layers.add(
+          panelId,
+          {
+            id: newId('layer'),
+            visible: true,
+            x: 0,
+            y: 0,
+            width: 100,
+            rotation: 0,
+            opacity: 1,
+            ...definedFields(input),
+            ...image,
+            kind,
+            name: input.name ?? media?.name ?? (kind === 'background' ? 'Background' : 'Layer'),
+          },
+          kind === 'background'
+        );
+      },
+
+      /**
+       * Update a layer: move (x/y), resize (width), rotate, change opacity or
+       * visibility, rename, edit its prompt, or swap its image (mediaId, or src as a Drive URL).
+       * Only the given fields change.
+       * @param panelId - The panel id.
+       * @param layerId - The layer id.
+       * @param patch - Partial layer fields.
+       * @returns A deep-cloned snapshot of the updated Layer. Throws when the panel or layer is not found.
+       */
+      update: (panelId: string, layerId: string, patch: LayerPatch): Layer => {
+        if (patch.kind !== undefined) assertKind(patch.kind, LAYER_KINDS, 'Layer kind');
+        const swapsImage = Boolean(patch.src) || patch.mediaId !== undefined;
+        const image = swapsImage ? resolveLayerImage(requireProject(deps), patch) : {};
+        return layers.update(panelId, layerId, { ...patch, ...image });
+      },
+
+      /**
+       * Delete a layer from a panel.
+       * @param panelId - The panel id.
+       * @param layerId - The layer id.
+       * @returns True when a layer was removed, false when not found.
+       */
+      delete: layers.delete,
+
+      /**
+       * The size a layer's art should be generated at. A background is the
+       * panel's size; a foreground layer is layer.width % of the panel wide,
+       * at its aspectRatio (default 1, so set aspectRatio first for a tall or
+       * wide subject). Foreground art should usually be a PNG with a
+       * transparent background.
+       * @param panelId - The panel id.
+       * @param layerId - The layer id.
+       * @returns { widthIn, heightIn, aspectRatio, pixels: { width, height } }, or null when the panel or layer is not found.
+       */
+      size: (panelId: string, layerId: string) => {
+        const project = requireProject(deps);
+        const panel = findPanel(project, panelId);
+        const layer = panel?.layers.find((l) => l.id === layerId);
+        if (!panel || !layer) return null;
+        const { widthIn, heightIn } = project.metadata.pageSize;
+        const panelWidth = (widthIn * panel.width) / 100;
+        if (layer.kind === 'background')
+          return artSize(panelWidth, (heightIn * panel.height) / 100);
+        const width = (panelWidth * layer.width) / 100;
+        return artSize(width, width / (layer.aspectRatio ?? 1));
+      },
+
+      /**
+       * Change a layer's place in the stack. "up" and "down" move it one step;
+       * "top" and "bottom" move it above or below every other layer; a number
+       * puts it at that 0-based position counted from the bottom of the whole
+       * stack (a background, if any, is position 0). Bubbles always stay above
+       * all layers.
+       * @param panelId - The panel id.
+       * @param layerId - The layer id.
+       * @param to - "top", "bottom", "up" (one step toward the top), "down", or a 0-based position from the bottom.
+       * @returns The panel's layers, bottom-to-top, after the move. Throws when the panel or layer is not found.
+       */
+      move: (
+        panelId: string,
+        layerId: string,
+        to: (typeof LAYER_MOVES)[number] | number
+      ): Layer[] => {
+        if (typeof to !== 'number') assertKind(to, LAYER_MOVES, 'Move');
+        else if (!Number.isInteger(to)) throw new Error('Move position must be an integer.');
+        return snapshot(
+          mutate(deps, (p) => {
+            const stack = requirePanel(p, panelId).layers;
+            const from = stack.findIndex((l) => l.id === layerId);
+            if (from < 0) throw new Error(`Layer "${layerId}" not found.`);
+            const [layer] = stack.splice(from, 1);
+            const target =
+              typeof to === 'number'
+                ? to
+                : { top: stack.length, bottom: 0, up: from + 1, down: from - 1 }[to];
+            stack.splice(Math.min(stack.length, Math.max(0, target)), 0, layer);
+            return stack;
+          })
+        );
+      },
+    },
+
+    /**
+     * Speech/thought/caption bubbles inside a panel, addressed by panel id.
+     * Bubbles always render above all layers.
+     */
+    bubbles: {
+      /**
+       * List the bubbles of a panel.
+       * @param panelId - The panel id.
+       * @returns Deep-cloned Bubble snapshots, or null when the panel is not found. Read-only.
+       */
+      list: bubbles.list,
+
+      /**
+       * Get one bubble.
+       * @param panelId - The panel id.
+       * @param bubbleId - The bubble id.
+       * @returns A deep-cloned Bubble snapshot, or null when not found. Read-only.
+       */
+      get: bubbles.get,
+
+      /**
+       * Add a bubble to a panel. Speech and thought bubbles get a pointer
+       * (tail) aimed at tailX/tailY, which by default sits below the
+       * bubble; move it later with update(). Captions have no pointer. The
+       * text is scaled to fit the bubble's width and height.
+       * @param panelId - The panel id.
+       * @param input - { kind?, text, x?, y?, width?, height?, tailX?, tailY? }. kind defaults to "speech"; x/y/width/height are % of panel size (x/y is the bubble's top-left corner; defaults 10, 10, 40, 20); tailX/tailY are the pointer's tip in % of panel size.
+       * @returns A deep-cloned snapshot of the new Bubble.
+       */
+      add: (panelId: string, input: BubbleInput): Bubble => {
+        assertKind(input.kind ?? 'speech', BUBBLE_KINDS, 'Bubble kind');
+        const {
+          kind = 'speech',
+          x = 10,
+          y = 10,
+          width = 40,
+          height = 20,
+          tailX,
+          tailY,
+          text,
+        } = input;
+        return bubbles.add(panelId, {
+          id: newId('bubble'),
+          kind,
+          x,
+          y,
+          width,
+          height,
+          ...(kind !== 'caption' && defaultPointer({ x, y, width, height })),
+          ...definedFields({ tailX, tailY }),
+          text,
+        });
+      },
+
+      /**
+       * Update a bubble: text, kind, position, size, or tail target.
+       * Only the given fields change.
+       * @param panelId - The panel id.
+       * @param bubbleId - The bubble id.
+       * @param patch - Partial bubble fields.
+       * @returns A deep-cloned snapshot of the updated Bubble. Throws when the panel or bubble is not found.
+       */
+      update: (panelId: string, bubbleId: string, patch: BubblePatch): Bubble => {
+        if (patch.kind !== undefined) assertKind(patch.kind, BUBBLE_KINDS, 'Bubble kind');
+        return bubbles.update(panelId, bubbleId, patch);
+      },
+
+      /**
+       * Delete a bubble from a panel.
+       * @param panelId - The panel id.
+       * @param bubbleId - The bubble id.
+       * @returns True when a bubble was removed, false when not found.
+       */
+      delete: bubbles.delete,
+    },
+
+    /**
+     * The project's story bible: outline plus the media registry.
+     * Use characters/scenes/objects for the individual entries.
+     */
+    metadata: {
+      /**
+       * Read the whole metadata block (outline, characters, scenes, objects, media).
+       * @returns A deep-cloned metadata snapshot. Read-only: mutate via the dedicated functions.
+       */
+      get: () => snapshot(requireProject(deps).metadata),
+
+      /**
+       * Set the story outline / synopsis.
+       * @param text - The new outline text.
+       * @returns { ok: true }.
+       */
+      setOutline: (text: string): ActionResult => {
+        deps.updateProject((p) => {
+          p.metadata.outline = text;
+        });
+        return { ok: true };
+      },
+
+      /**
+       * Set the physical page dimensions for the comic. Panels are stored as
+       * percentages of the page, so they keep their layout but their aspect
+       * ratios change with the page: regenerate art sized by panels.size.
+       * @param pageSize - { label, widthIn, heightIn }, e.g. one of
+       *   PAGE_SIZE_PRESETS from the data model.
+       * @returns { ok, error? }.
+       */
+      setPageSize: (pageSize: PageSize): ActionResult => {
+        if (
+          !pageSize ||
+          typeof pageSize.label !== 'string' ||
+          !(pageSize.widthIn > 0) ||
+          !(pageSize.heightIn > 0)
+        ) {
+          return { ok: false, error: 'pageSize needs { label, widthIn, heightIn }.' };
+        }
+        deps.updateProject((p) => {
+          p.metadata.pageSize = { ...pageSize };
+        });
+        return { ok: true };
+      },
+    },
+
+    /**
+     * Characters in the story bible. A character's description sets its visual
+     * look (appearance, outfit, distinctive features) plus continuity notes;
+     * imageIds point at reference art in metadata.media (upload it with
+     * media.upload). An LLM reads a character (description + images) together
+     * with a scene to build image-generation prompts. In update(), imageIds and
+     * linkIds replace the existing lists (they are not appended to).
+     */
+    characters: {
+      /**
+       * List characters.
+       * @returns [{ id, name }] for every character.
+       */
+      list: characters.list,
+
+      /**
+       * Get one character with its full description and image/scene links.
+       * @param id - The character id.
+       * @returns A deep-cloned Character snapshot, or null when not found. Read-only.
+       */
+      get: characters.get,
+
+      /**
+       * Create a character.
+       * @param input - { name, description?, imageIds?, linkIds? }: linkIds are scene ids the character appears in.
+       * @returns The new Character.
+       */
+      create: characters.create,
+
+      /**
+       * Update a character's name, description, or image/scene links.
+       * Only the given fields change.
+       * @param id - The character id.
+       * @param patch - { name?, description?, imageIds?, linkIds? }.
+       * @returns A deep-cloned snapshot of the updated Character. Throws when not found.
+       */
+      update: characters.update,
+
+      /**
+       * Delete a character. References from scenes are left dangling; clean
+       * them with scenes.update if needed.
+       * @param id - The character id.
+       * @returns True when a character was removed, false when not found.
+       */
+      delete: characters.delete,
+    },
+
+    /**
+     * Scenes/locations in the story bible. A scene's description covers the
+     * setting, time of day, mood, and lighting — the other half (with a
+     * character) of an image-generation prompt.
+     */
+    scenes: {
+      /**
+       * List scenes.
+       * @returns [{ id, name }] for every scene.
+       */
+      list: scenes.list,
+
+      /**
+       * Get one scene with its full description and character/image links.
+       * @param id - The scene id.
+       * @returns A deep-cloned Scene snapshot, or null when not found. Read-only.
+       */
+      get: scenes.get,
+
+      /**
+       * Create a scene.
+       * @param input - { name, description?, imageIds?, linkIds? }: linkIds are character ids appearing in the scene.
+       * @returns The new Scene.
+       */
+      create: scenes.create,
+
+      /**
+       * Update a scene's name, description, or character/image links.
+       * Only the given fields change.
+       * @param id - The scene id.
+       * @param patch - { name?, description?, imageIds?, linkIds? }.
+       * @returns A deep-cloned snapshot of the updated Scene. Throws when not found.
+       */
+      update: scenes.update,
+
+      /**
+       * Delete a scene. References from characters/objects are left dangling;
+       * clean them with characters.update / objects.update if needed.
+       * @param id - The scene id.
+       * @returns True when a scene was removed, false when not found.
+       */
+      delete: scenes.delete,
+    },
+
+    /**
+     * Props/objects in the story bible. Same shape as characters: a visual
+     * description plus reference art, linkable from scenes.
+     */
+    objects: {
+      /**
+       * List objects.
+       * @returns [{ id, name }] for every object.
+       */
+      list: objects.list,
+
+      /**
+       * Get one object with its full description and image/scene links.
+       * @param id - The object id.
+       * @returns A deep-cloned ComicObject snapshot, or null when not found. Read-only.
+       */
+      get: objects.get,
+
+      /**
+       * Create an object.
+       * @param input - { name, description?, imageIds?, linkIds? }: linkIds are scene ids where the object appears.
+       * @returns The new ComicObject.
+       */
+      create: objects.create,
+
+      /**
+       * Update an object's name, description, or image/scene links.
+       * Only the given fields change.
+       * @param id - The object id.
+       * @param patch - { name?, description?, imageIds?, linkIds? }.
+       * @returns A deep-cloned snapshot of the updated ComicObject. Throws when not found.
+       */
+      update: objects.update,
+
+      /**
+       * Delete an object.
+       * @param id - The object id.
+       * @returns True when an object was removed, false when not found.
+       */
+      delete: objects.delete,
+    },
+
+    /**
+     * The project's media registry: image files in the Drive project folder.
+     * Layers (via mediaId) and characters/scenes/objects (via imageIds) refer
+     * to these entries instead of raw URLs.
+     */
+    media: {
+      /**
+       * List every registered media file.
+       * @returns Deep-cloned MediaItem snapshots. Read-only.
+       */
+      list: (): MediaItem[] => snapshot(requireProject(deps).metadata.media),
+
+      /**
+       * Get one media entry.
+       * @param id - The media id.
+       * @returns A deep-cloned MediaItem snapshot, or null when not found. Read-only. url is the image's Drive URL; its bytes cannot be fetched without the user's Drive access token, which stays private to the page, so do not try to download it (use page.openPreview() and a screenshot to look at results).
+       */
+      get: (id: string): MediaItem | null => {
+        const item = requireProject(deps).metadata.media.find((m) => m.id === id);
+        return item ? snapshot(item) : null;
+      },
+
+      /**
+       * Upload image bytes to the current project folder on Drive and register
+       * the file in metadata.media. All images live on Drive: upload art and
+       * character reference images with this, then wire the returned id into a
+       * layer (layers.add with mediaId) or a character / scene / object (imageIds).
+       * The returned url is the image's Drive URL.
+       * @param name - File name, e.g. "hero-front.png".
+       * @param dataUrl - The image bytes as a data: URL (e.g. from a generated PNG).
+       * @param opts - Optional { mimeType }: defaults to "image/png".
+       * @returns A promise resolving to the new MediaItem.
+       */
+      upload: (name: string, dataUrl: string, opts?: { mimeType?: string }): Promise<MediaItem> =>
+        deps.uploadStorageMedia(name, dataUrl, opts?.mimeType || 'image/png'),
+    },
+  };
+
+  return ComicBuilder;
+}
+
+type ComicBuilderApi = ReturnType<typeof createComicBuilder>;
+
+/** Install the API on window, with the extracted JSDoc attached as each node's toString(). */
+export function installComicBuilder(deps: ComicBuilderDeps): void {
+  const api = createComicBuilder(deps);
+  attachDocs(api, ACTION_DOCS, 'ComicBuilder');
+  window.ComicBuilder = api;
+}
+
+export function uninstallComicBuilder(): void {
+  delete window.ComicBuilder;
+}
+
+/** The installed window.ComicBuilder; every UI control calls through it. */
+export function cb(): ComicBuilderApi {
+  if (!window.ComicBuilder) throw new Error('ComicBuilder API is not installed yet.');
+  return window.ComicBuilder;
+}
