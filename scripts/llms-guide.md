@@ -1,6 +1,6 @@
-# Comic Builder: how to build a comic
+# VibeComics: how to build a comic
 
-Comic Builder is a browser app for making comics. Pages are made of panels;
+VibeComics is a browser app for making comics. Pages are made of panels;
 each panel is a stack of image layers with speech bubbles on top; everything is
 stored in the user's Google Drive. This file tells you, an AI agent, **how to
 build a good comic with it, step by step**. It does not list functions.

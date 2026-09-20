@@ -51,7 +51,7 @@ function showUpdateBanner(): void {
   el.setAttribute('role', 'alert');
 
   const text = document.createElement('span');
-  text.textContent = 'A new version of Comic Builder is available.';
+  text.textContent = 'A new version of VibeComics is available.';
   const btn = document.createElement('button');
   btn.className = 'btn btn-sm btn-primary ms-2';
   btn.textContent = 'Reload';

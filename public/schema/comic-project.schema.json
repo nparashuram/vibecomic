@@ -357,7 +357,7 @@
   },
   "$id": "schema/comic-project.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "A generic Comic Builder project: pages of panels, each panel compositing image layers with speech bubbles on top, plus a story-bible metadata block (outline, characters, scenes, objects, media registry). Page numbers are 0-based and displayed as 0, 1, 2, ...",
+  "description": "A generic VibeComics project: pages of panels, each panel compositing image layers with speech bubbles on top, plus a story-bible metadata block (outline, characters, scenes, objects, media registry). Page numbers are 0-based and displayed as 0, 1, 2, ...",
   "properties": {
     "id": {
       "description": "Unique project id.",

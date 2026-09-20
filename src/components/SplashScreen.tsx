@@ -19,7 +19,7 @@ export default function SplashScreen({ deviceCode }: { deviceCode: DeviceCodeInf
           />
           <h1 className="card-title h4 mb-3">Connect to Google Drive</h1>
           <p className="card-text">
-            Comic Builder keeps your comic — its pages, artwork, and project file — on your Google
+            VibeComics keeps your comic — its pages, artwork, and project file — on your Google
             Drive. Nothing is ever uploaded to our servers.
           </p>
           <p className="card-text">Connect once per browser session to open the editor.</p>
@@ -33,7 +33,7 @@ export default function SplashScreen({ deviceCode }: { deviceCode: DeviceCodeInf
           <div className={`collapse${whyOpen ? ' show' : ''}`}>
             <div className="card card-body bg-light small mb-3">
               <p>
-                Comic Builder is a static website: it has no server and no database of its own. Your
+                VibeComics is a static website: it has no server and no database of its own. Your
                 comic's <code>project.json</code> and every artwork file live in a folder on{' '}
                 <strong>your</strong> Google Drive, and the app reads and writes them directly from
                 your browser.

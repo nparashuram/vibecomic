@@ -1,4 +1,4 @@
-# Comic Builder — Engineering Spec
+# VibeComics — Engineering Spec
 
 This is the full design document. The short user-facing overview lives in
 `README.md`. The agent-facing runtime API reference is `ComicBuilder.help()`
@@ -6,7 +6,7 @@ in the browser console and the static copy in `public/api.txt`, plus the how-to 
 
 ## 1. Architecture
 
-Comic Builder is a **static single-page app** (Vite + React + TypeScript)
+VibeComics is a **static single-page app** (Vite + React + TypeScript)
 deployed to GitHub Pages. It has no server and no database of its own.
 
 ```

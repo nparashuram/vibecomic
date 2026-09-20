@@ -129,7 +129,10 @@ export async function requestDriveAccess(): Promise<void> {
         },
         error_callback: (error) => reject(toError(error)),
       });
-      client.requestAccessToken({ prompt: 'consent' });
+      // The default prompt shows Google's consent screen only the first time (and again after a
+      // revoke); later connects are a popup that closes itself, or an account chooser. 'consent'
+      // would force the full screen on every reload for no gain: this flow has no refresh token.
+      client.requestAccessToken({ prompt: '' });
     } catch (e) {
       reject(toError(e));
     }

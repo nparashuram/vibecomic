@@ -1,5 +1,5 @@
 /**
- * The window.ComicBuilder command API: a CLI for the whole Comic Builder UI.
+ * The window.ComicBuilder command API: a CLI for the whole VibeComics UI.
  *
  * Every UI control calls these same functions, so a human's clicks and an AI
  * agent's calls share one code path. The JSDoc on every node of the
@@ -60,7 +60,7 @@ function createComicBuilder(deps: ComicBuilderDeps) {
   const objects = storyApi(deps, 'objects');
 
   /**
-   * Top-level command API for Comic Builder: every UI control calls these same
+   * Top-level command API for VibeComics: every UI control calls these same
    * functions (one code path, no drift). Namespaces: storage (Drive OAuth,
    * project folders, project.json IO), project (whole-project replace), page
    * (navigation, preview, adding pages), panels (page layout), layers, bubbles,
@@ -92,8 +92,9 @@ function createComicBuilder(deps: ComicBuilderDeps) {
        * The promise resolves when the popup flow finishes, whether or not it
        * succeeded (a failure shows as a message in the app and does not reject),
        * so check storage.status().connected afterwards. The token is kept only in
-       * page memory: reloading the page drops it, and connecting again shows
-       * Google's consent popup again.
+       * page memory: reloading the page drops it, and connecting again opens
+       * Google's popup once more (which closes itself when the user has
+       * already granted access, or shows an account chooser).
        * @returns A promise that resolves when the popup flow has finished; check storage.status().connected.
        */
       connect: (): Promise<void> => deps.connectStorage(),

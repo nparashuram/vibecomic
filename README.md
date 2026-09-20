@@ -1,4 +1,4 @@
-# Comic Builder
+# VibeComics
 
 Build and edit a comic (or graphic novel) in your browser. Your comic is
 stored as a `project.json` plus artwork files in a folder on **your Google

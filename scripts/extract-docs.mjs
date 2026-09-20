@@ -231,7 +231,7 @@ function renderReference({ docs, functions }) {
   const depth = (p) => p.split('.').length;
   const heading = (p) => `### ${p}${functions.has(p) ? '()' : ''}`;
 
-  const lines = [`# ${ROOT_NAME} — AI command API for Comic Builder`, ''];
+  const lines = [`# ${ROOT_NAME} — AI command API for VibeComics`, ''];
   const rootDoc = docs.get(ROOT_NAME);
   if (rootDoc) lines.push(`> ${rootDoc.replaceAll('\n', '\n> ')}`, '');
   lines.push(
