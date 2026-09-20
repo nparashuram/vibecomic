@@ -5,7 +5,9 @@
  *     for per-node toString()) and HELP_TEXT (returned by ComicBuilder.help()).
  *   - public/api.txt: HELP_TEXT plus the data model: the API reference for AI agents.
  *   - public/llms.txt: scripts/llms-guide.md, the step-by-step guide to building
- *     a comic (no API details; it points to api.txt).
+ *     a comic (no API details; it points to api.txt and the CLI).
+ *   - src/cli/commands.gen.ts: the CLI's command table (docs plus how each
+ *     parameter is typed on the command line; see scripts/cli-commands.mjs).
  *
  * Run before tsc/vite: `node scripts/extract-docs.mjs`. Exits 1 when the source
  * cannot be parsed so the docs never go silently stale; nodes without JSDoc are
@@ -15,21 +17,29 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { buildCommands } from './cli-commands.mjs';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ACTIONS_TS = path.join(ROOT, 'src', 'ai', 'actions.ts');
 const GEN_TS = path.join(ROOT, 'src', 'ai', 'actions.docs.gen.ts');
 const LLMS_TXT = path.join(ROOT, 'public', 'llms.txt');
 const API_TXT = path.join(ROOT, 'public', 'api.txt');
+const COMMANDS_TS = path.join(ROOT, 'src', 'cli', 'commands.gen.ts');
 const ROOT_NAME = 'ComicBuilder';
 
 const ts = createRequire(path.join(ROOT, 'package.json'))('typescript');
 
 const CONVENTIONS = [
-  '- Connecting to Drive (needed once per page load) needs a REAL HUMAN CLICK on the connect button:',
-  '  `ComicBuilder.storage.connect()` starts the OAuth flow but browsers block',
+  '- This API is `window.ComicBuilder` in the running app, and the same functions are the',
+  '  commands of the `vibecomics` command line (`vibecomics.mjs`, served next to the app; needs',
+  '  Node.js 20+; `node vibecomics.mjs <namespace> <function> [arguments]` prints JSON).',
+  '  Agents should use the command line: no browser, no injected JavaScript.',
+  '- Connecting to Drive in the app (once per page load) needs a REAL HUMAN CLICK on the connect',
+  '  button: `ComicBuilder.storage.connect()` starts the OAuth flow but browsers block',
   '  popups from injected scripts, so an agent cannot complete it alone.',
-  '  `ComicBuilder.storage.connectWithDevice()` is the headless alternative.',
+  '  `ComicBuilder.storage.connectWithDevice()` is the headless alternative. The command line',
+  '  only uses that one: `vibecomics auth login` prints a URL and a code for the user to',
+  '  approve, `vibecomics auth status` finishes the login, and the login is kept between runs.',
   '- Except for `storage.*` and `help()`, everything needs an open project. Without',
   '  one, `page.count/select/current` and `layers|bubbles.list/get` return 0 or null,',
   '  and every other call throws "No project is open". Open one with',
@@ -56,7 +66,7 @@ const CONVENTIONS = [
   '- Bubbles always render above all layers. Speech and thought bubbles have a',
   '  pointer aimed at `tailX`/`tailY`; the text is scaled to fit the bubble.',
   '- Changes are saved automatically: every minute, and only when something',
-  '  changed. `storage.save()` saves immediately.',
+  '  changed. `storage.save()` saves immediately. (The command line saves after every command.)',
   '- Drive scope is `drive.file`: the app only sees folders and files IT created.',
   '  `storage.listProjects()` is the complete project list.',
   '- All images live on Google Drive. Upload with `media.upload`, then use the',
@@ -71,9 +81,10 @@ const CONVENTIONS = [
   '  `media.delete(id)` removes an image everywhere it is used.',
   "- Drive image URLs cannot be opened without the user's Drive access token, which",
   '  stays private to the page, so do not fetch `media.url` or a layer `src` yourself.',
-  '  To read an image, call `media.download(id)` (it returns a data URL); to look at',
-  '  the result on the page, `page.openPreview()` and take a screenshot. Never invent',
-  '  image URLs.',
+  '  To read an image, call `media.download(id)` (it returns a data URL; the command line',
+  '  saves it to a file instead, `--out file`); to look at the result on the page in the app,',
+  '  `page.openPreview()` and take a screenshot (the command line has no preview). Never',
+  '  invent image URLs.',
 ];
 
 /** How to build a comic (workflow, style, continuity), kept as plain Markdown. */
@@ -83,6 +94,7 @@ const SERVED_FILES = [
   '## Files served next to the app',
   '',
   '- `llms.txt`: this guide',
+  '- `vibecomics.mjs`: the command line (Node.js 20+): every API function as a command, no browser needed',
   '- `api.txt`: the API reference (also `ComicBuilder.help()` in the running app)',
   '- `schema/comic-project.schema.json`: JSON Schema of the project model',
 ];
@@ -191,6 +203,7 @@ function findRoot(sourceFile) {
 /** Walk the object literal, recording docs by dotted path (in source order). */
 function collectDocs(sourceFile, root) {
   const docs = new Map();
+  const details = new Map();
   const functions = new Set();
   const undocumented = [];
 
@@ -204,6 +217,7 @@ function collectDocs(sourceFile, root) {
       const doc = readJsDoc(member, sourceFile);
       if (!doc.description) undocumented.push(memberPath);
       docs.set(memberPath, formatDoc(doc));
+      details.set(memberPath, doc);
 
       const value = isProperty ? member.initializer : null;
       if (value && ts.isObjectLiteralExpression(value)) {
@@ -219,9 +233,11 @@ function collectDocs(sourceFile, root) {
     }
   }
 
-  docs.set(ROOT_NAME, formatDoc(readJsDoc(root.statement, sourceFile)));
+  const rootDoc = readJsDoc(root.statement, sourceFile);
+  docs.set(ROOT_NAME, formatDoc(rootDoc));
+  details.set(ROOT_NAME, rootDoc);
   visit(root.literal, ROOT_NAME);
-  return { docs, functions, undocumented };
+  return { docs, details, functions, undocumented };
 }
 
 /** The skill-style reference: conventions, then one section per namespace. */
@@ -288,10 +304,22 @@ function main() {
       `export const HELP_TEXT = ${JSON.stringify(reference)};\n`
   );
   fs.writeFileSync(API_TXT, `${reference}\n\n${DATA_MODEL.join('\n')}\n`);
+  fs.mkdirSync(path.dirname(COMMANDS_TS), { recursive: true });
+  fs.writeFileSync(
+    COMMANDS_TS,
+    '// GENERATED by scripts/extract-docs.mjs — do not edit by hand.\n' +
+      '// Source of truth: the JSDoc in src/ai/actions.ts and scripts/cli-inputs.mjs.\n' +
+      "import type { CommandTable } from './commandTypes';\n\n" +
+      `export const COMMAND_TABLE: CommandTable = ${JSON.stringify(
+        buildCommands({ ...collected, rootName: ROOT_NAME }),
+        null,
+        2
+      )};\n`
+  );
   fs.writeFileSync(LLMS_TXT, `${LLMS_GUIDE}\n\n${SERVED_FILES.join('\n')}\n`);
   const shown = (file) => path.relative(ROOT, file);
   console.log(
-    `extract-docs: wrote ${collected.docs.size} entries to ${shown(GEN_TS)}, ${shown(API_TXT)} and ${shown(LLMS_TXT)}`
+    `extract-docs: wrote ${collected.docs.size} entries to ${shown(GEN_TS)}, ${shown(API_TXT)}, ${shown(LLMS_TXT)} and ${shown(COMMANDS_TS)}`
   );
 }
 

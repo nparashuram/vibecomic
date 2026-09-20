@@ -105,7 +105,26 @@ One-time setup for a new repository:
 
 ## For AI agents
 
-Open the browser console on any page of the app and type:
+Agents use the command line, `vibecomics.mjs`, which is deployed next to the
+site (<https://nparashuram.github.io/vibecomics/vibecomics.mjs>; Node.js 20 or
+newer; nothing to install, no browser needed):
+
+```sh
+node vibecomics.mjs help                    # every command
+node vibecomics.mjs auth login              # prints a URL + code for the user to approve
+node vibecomics.mjs auth status             # finishes the login once they have
+node vibecomics.mjs storage createProject "My comic"
+node vibecomics.mjs layers add <panelId> '{"prompt":"…"}'
+```
+
+It is the same API as `window.ComicBuilder` in the app (see below), one command
+per function, printing JSON. The login (a refresh token) and the open project
+are kept in `~/.vibecomics` (`VIBECOMICS_HOME` moves it); each command loads the
+project from Drive, changes it and saves it back. Locally, `npm run cli -- help`
+builds and runs it (it needs the device OAuth client in `.env.local`, like the
+app's "connect with a code" option).
+
+In the running app's browser console, the same API is:
 
 ```js
 ComicBuilder.help();

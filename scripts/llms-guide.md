@@ -1,13 +1,29 @@
 # VibeComics: how to build a comic
 
-VibeComics is a browser app for making comics. Pages are made of panels;
-each panel is a stack of image layers with speech bubbles on top; everything is
-stored in the user's Google Drive. This file tells you, an AI agent, **how to
-build a good comic with it, step by step**. It does not list functions.
+VibeComics is a comic builder. Pages are made of panels; each panel is a stack
+of image layers with speech bubbles on top; everything is stored in the user's
+Google Drive. This file tells you, an AI agent, **how to build a good comic with
+it, step by step**. It does not list functions.
 
-- **Exact functions, parameters and examples:** the API reference, `api.txt`
-  (served next to this file), or `ComicBuilder.help()` in the running app. Each
-  function and namespace also prints its own docs when converted to a string.
+- **How you drive it: the `vibecomics` command line, not a browser.** It is one
+  file, `vibecomics.mjs`, with nothing to install (Node.js 20 or newer; check
+  `node --version`). Download it:
+  `curl -fsSLO https://nparashuram.github.io/vibecomics/vibecomics.mjs` (it is
+  served next to this file, so if you read this file from somewhere else, use the
+  same address with `llms.txt` replaced by `vibecomics.mjs`). Then
+  `node vibecomics.mjs help`. Every function is a command:
+  `node vibecomics.mjs <namespace> <function> [arguments]`. It prints JSON. You do
+  not need a browser and you do not need to inject any JavaScript. Below,
+  "the CLI" means this program.
+- **What running it needs:** Node.js 20 or newer (older versions refuse to start)
+  and network access to Google (`oauth2.googleapis.com` and
+  `www.googleapis.com`). Nothing else: no npm, no packages, no browser. It keeps
+  its login and the open project in `~/.vibecomics`; if your sandbox is wiped
+  between sessions, set the `VIBECOMICS_HOME` environment variable to a folder
+  that persists, or the user will have to approve a new login each time.
+- **Exact functions, parameters and examples:** `node vibecomics.mjs help` lists
+  every command, `help <namespace> <function>` explains one, and `help --full`
+  prints the whole API reference (also served as `api.txt`).
 - **Project file format:** `schema/comic-project.schema.json`.
 
 ## Your role: orchestrator
@@ -27,20 +43,20 @@ is entirely your responsibility.**
 
 ## Before you start
 
-- The app must be open in a browser. Its API is on `window.ComicBuilder` once
-  the page has loaded.
-- The user has to connect Google Drive **with a real click** on the connect
-  button (browsers block sign-in popups opened by scripts). Ask them to do that
-  if the API says you are not connected. The API reference describes a headless
-  alternative.
+- Log in to the user's Google Drive once: `node vibecomics.mjs auth login` prints
+  a web address and a code. **Show them to the user** and ask them to open the
+  address on any device (a phone works), enter the code and approve. Then run
+  `node vibecomics.mjs auth status`: it finishes the login when they have
+  approved (if it says "pending", wait for them and run it again). The login is
+  remembered on this machine, so you do this once, not for every command.
 - Open the user's project, or create one if they want a new comic. Nothing else
-  works without an open project.
+  works without an open project. It stays open for the commands that follow.
 - Every image lives on the user's Drive, inside the project's folder. You
-  upload images to the project; you never invent or paste image URLs, and you
-  cannot fetch a Drive image yourself (the app has a way to hand you an image
-  when you need to see it or pass it to a generator).
-- The app saves by itself about once a minute when something changed, and can
-  save immediately on request. Save before you finish.
+  upload images (files on your disk) to the project; you never invent or paste
+  image URLs, and you cannot fetch a Drive image yourself (the CLI can download
+  one to a file when you need to see it or pass it to a generator).
+- Every command saves its changes to Drive before it exits, so there is nothing
+  to save at the end. Run commands one at a time, never in parallel.
 
 ## The workflow
 
@@ -199,7 +215,12 @@ matters:
 ### 7. Add each image to its layer and compose the panel
 
 Upload each generated file to the project, attach it to the layer whose prompt
-it answers, then compose:
+it answers, then compose. **Always upload a thumbnail with each image:** resize a
+copy yourself to about 256 pixels on its long side (PNG if the image has
+transparency, so cut-outs stay cut out; otherwise JPEG at about 85% quality) and
+pass it with the upload. The editor lists images by thumbnail, and one without
+must be downloaded in full just to appear, which is slow with many or large
+images. The CLI does not make thumbnails for you.
 
 - Place and size foreground layers so they read well: put the focal subject
   near a third of the panel, overlap layers for depth, tuck characters against
@@ -230,8 +251,11 @@ After the art is in place, add the words as bubbles, not as text inside images:
 
 ### 9. Review every page and correct
 
-Open the preview of each page and take a screenshot; compare it with the
-character's reference art and with the previous page. Check:
+The CLI has no preview screen, so review what you can see: download the images
+you generated and look at each one (compare it with the character's reference
+art and with the previous page), and read each page back (its panels, layers,
+prompts and bubbles) to check the layout. If the user has the app open, ask them
+to look at a page and tell you what is wrong. Check:
 
 - **Character continuity:** face, hair, outfit, proportions, colours.
 - **Transparency:** no white boxes, halos or leftover background around

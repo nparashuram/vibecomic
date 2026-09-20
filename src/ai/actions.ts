@@ -10,7 +10,8 @@
  * how-to-build-a-comic guide, scripts/llms-guide.md).
  */
 
-import type { DeviceCodeInfo, ProjectFolder } from '../drive/driveClient';
+import type { DeviceCodeInfo } from '../drive/deviceOAuth';
+import type { ProjectFolder } from '../drive/driveRest';
 import { createPanel, defaultPointer } from '../state/layout';
 import { assertValidProject, normalizeProject } from '../state/project';
 import type { Bubble, ComicPage, ComicProject, Layer, MediaItem, PageSize } from '../types/comic';
@@ -50,8 +51,11 @@ declare global {
   }
 }
 
-/** Build the ComicBuilder action tree bound to the given deps. */
-function createComicBuilder(deps: ComicBuilderDeps) {
+/**
+ * Build the ComicBuilder action tree bound to the given deps. It uses no browser
+ * APIs, so it runs in Node too (the CLI); the page installs it on `window`.
+ */
+export function createComicBuilder(deps: ComicBuilderDeps) {
   const layers = panelItemsApi(deps, 'layers', 'Layer');
   const bubbles = panelItemsApi(deps, 'bubbles', 'Bubble');
   const panels = panelsApi(deps);

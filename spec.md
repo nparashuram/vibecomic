@@ -298,7 +298,7 @@ Semantics:
 parses `src/ai/actions.ts` with the TypeScript compiler API, extracting the
 JSDoc above the `ComicBuilder` literal and every namespace and method (object
 properties, shorthand properties and methods are all handled; `@returns` text
-that starts with `{ … }` is kept verbatim). It emits three artifacts:
+that starts with `{ … }` is kept verbatim). It emits four artifacts:
 
 1. `src/ai/actions.docs.gen.ts` — `ACTION_DOCS`, a path-keyed docs table, and
    `HELP_TEXT`, the rendered reference (gitignored; generated before `tsc`).
@@ -309,7 +309,14 @@ that starts with `{ … }` is kept verbatim). It emits three artifacts:
 3. `public/llms.txt` — `scripts/llms-guide.md`, printed verbatim: the
    **how-to-build-a-comic guide**. It deliberately contains no function
    names, signatures or code; it points to `api.txt` for those (the JSDoc,
-   including its layout examples, is where API usage lives).
+   including its layout examples, is where API usage lives) and tells the
+   agent to drive the app with the CLI (section 13), not a browser.
+4. `src/cli/commands.gen.ts` — the CLI's command table (section 13): the same
+   JSDoc plus `scripts/cli-inputs.mjs`, which says what kind of value each
+   parameter is (text, number, choice, JSON, file, or an object given as one
+   flag per field). `scripts/cli-commands.mjs` builds it and **fails the build**
+   if `cli-inputs.mjs` and the JSDoc disagree about any function's parameters
+   (gitignored; generated before `tsc`).
 
 The guide is plain Markdown. It tells the agent that it is the
 **orchestrator** (it directs the work and writes prompts for an image
@@ -346,11 +353,17 @@ they cannot drift from the code.
   the bytes once (`loadBlobUrl`) and shows them from a blob URL. Character
   reference images are uploaded from the Characters and Scenes tabs via
   `media.upload` and shown as blob-URL thumbnails (the media thumbnail, `thumbnailDriveFileId`).
+- **One implementation for the page and the CLI:** the Drive REST calls
+  (`driveRest.ts`) and the OAuth device-flow requests (`deviceOAuth.ts`) use no
+  browser APIs; the access token and `fetch` are injected. `driveClient.ts` binds
+  them to the page's in-memory token and adds the GIS popup flow. The CLI
+  (section 13) binds the same code to a token kept in its state file.
 - **Client IDs:** `GOOGLE_CLIENT_ID` (Web application, GIS popup) and
   `GOOGLE_DEVICE_CLIENT_ID` + `GOOGLE_DEVICE_CLIENT_SECRET`
   ("TVs and Limited Input devices", device flow) at build time. They are
   read only from the dotenv files (`.env`, `.env.local`) by
-  `vite.config.js`; shell env vars are ignored. CI writes `.env.local`
+  `scripts/read-env.mjs` (used by `vite.config.js` and `scripts/build-cli.mjs`);
+  shell env vars are ignored. CI writes `.env.local`
   from the repo secrets of the same names before building.
   The web client is a public OAuth client with no secret anywhere. The
   device client secret ships in the bundle by design: Google's
@@ -404,20 +417,25 @@ Pattern: cache-first with commit-based update detection.
 `npm run build`:
 
 ```
-node scripts/extract-docs.mjs   # actions.ts -> actions.docs.gen.ts + public/api.txt; guide -> public/llms.txt
+node scripts/extract-docs.mjs   # actions.ts -> actions.docs.gen.ts + public/api.txt + src/cli/commands.gen.ts; guide -> public/llms.txt
+node scripts/build-cli.mjs      # src/cli/bin.ts -> public/vibecomics.mjs (esbuild, Node 20)
 tsc -b                          # TypeScript (project references)
 vite build                      # -> dist/
 node scripts/build-meta.mjs     # bundle src/sw.ts -> dist/sw.js; write dist/buildinfo.js
 ```
 
-`npm run dev` runs the extractor first for the same reason. Other scripts:
-`npm run lint` (oxlint) and `npm test` (`scripts/run-tests.mjs` bundles every
-`src/**/*.test.ts` with esbuild and runs it with Node's built-in test runner;
-the tests cover the pure code: panel layout geometry, Drive URL parsing, and
-project validation and normalization). Formatting: Prettier config in `.prettierrc.json` (single quotes, semicolons, 2-space,
+`npm run dev` runs the extractor and the CLI bundle first for the same reason
+(vite then serves `public/vibecomics.mjs`). `npm run cli -- <args>` rebuilds and
+runs the CLI. Other scripts:
+`npm run lint` (oxlint) and `npm test` (runs the extractor, then
+`scripts/run-tests.mjs`, which bundles every `src/**/*.test.ts` with esbuild and
+runs it with Node's built-in test runner; the tests cover the pure code: panel
+layout geometry, Drive URL parsing, and project validation and normalization,
+plus the CLI end to end against an in-memory fake of Google's OAuth and Drive
+endpoints, `src/cli/testing/fakeGoogle.ts`). Formatting: Prettier config in `.prettierrc.json` (single quotes, semicolons, 2-space,
 100 col, es5 trailing commas); `npm run format` / `npm run format:check`;
 a Husky pre-commit hook runs `lint-staged` on
-`*.{js,ts,json,css,html,md}`. `src/ai/actions.docs.gen.ts`, `public/llms.txt`, `public/api.txt` and `*.tsbuildinfo` are
+`*.{js,ts,json,css,html,md}`. `src/ai/actions.docs.gen.ts`, `src/cli/commands.gen.ts`, `public/llms.txt`, `public/api.txt`, `public/vibecomics.mjs` and `*.tsbuildinfo` are
 gitignored (generated).
 
 CI (`.github/workflows/ci.yml`): `npm ci`, `npm run format:check`,
@@ -454,6 +472,7 @@ it's drawn comic content, it's custom CSS.
 ## 12. Source layout
 
 - `src/App.tsx` — screen state, Drive wiring (`ComicBuilderDeps`), toast.
+- `src/cli/` — the command line (section 13).
 - `src/components/` — one file per screen or widget, grouped by role:
   screens (`SplashScreen`, `ProjectTiles`, `EditorScreen`, `PreviewScreen`),
   editor chrome (`EditorNavbar`, `SaveButton`, `StatusToast`, `DropdownMenu`),
@@ -466,12 +485,57 @@ it's drawn comic content, it's custom CSS.
 - `src/ai/` — `actions.ts` (the documented `window.ComicBuilder` literal:
   the JSDoc there is the source of the LLM docs), `builders.ts` (the shared
   list/get/add/update/delete builders and validation it is assembled from),
-  `deps.ts` (`ComicBuilderDeps` and the input/patch types), `docs.ts`,
-  generated `actions.docs.gen.ts`.
-- `src/drive/` — `driveClient.ts` (OAuth + Drive REST), `projectStore.ts`
-  (load, validate and normalize a project).
+  `deps.ts` (`ComicBuilderDeps` and the input/patch types), `storageDeps.ts`
+  (the Drive-backed deps the page and the CLI share: media upload, download and
+  delete, create or open a project), `docs.ts`, generated `actions.docs.gen.ts`.
+  `createComicBuilder(deps)` uses no browser APIs, so it runs in Node too.
+- `src/drive/` — `driveRest.ts` (Drive REST, token and `fetch` injected),
+  `deviceOAuth.ts` (device flow and refresh, no browser APIs), `driveClient.ts`
+  (the page's token, the GIS popup flow, and the two above bound together),
+  `projectStore.ts` (load, validate and normalize a project).
 - `src/state/` — project validation/creation/normalization (`project.ts`),
   panel layout geometry (`layout.ts`) and `useProjectSaver`.
 - `src/types/comic.ts` — the data model; `src/utils/` — small shared helpers
   (`driveUrl.ts` builds and parses Drive URLs, `geometry.ts`, `drag.ts`, ...).
 - `*.test.ts` files sit next to the code they test (`npm test`).
+
+## 13. The command line (`vibecomics.mjs`)
+
+Agents that cannot run JavaScript in a page (or should not need a browser at
+all) drive the app with a Node.js 20+ program, bundled by esbuild to
+`public/vibecomics.mjs` and deployed next to `llms.txt`. It calls the same
+`createComicBuilder(deps)` as the page, with deps built for Node, so a command is
+exactly the API function of the same name:
+`node vibecomics.mjs <namespace> <function> [arguments]` prints the result as JSON
+(errors go to stderr as `error: …`, exit 1; exit 2 for a mistake in how the
+command was typed). `help`, `help <namespace> <function>` and `help --full` are
+generated from the JSDoc.
+
+- **Arguments** follow the command table: positional in the API's parameter
+  order (or as `--name value`); numbers, choices and JSON are validated before the
+  call; an object parameter is one flag per field (`page add --title X`) or JSON;
+  a file parameter is a path (read into a data URL; `media upload hero.png
+--thumbnail small.png`, with the name and MIME type defaulting from the file);
+  a value starting with `@` is read from that file (`@bubble.json`).
+  `media download <id> --out file` writes the image to a file.
+- **State** (`src/cli/state.ts`): each command is its own process, so the login
+  (a refresh token and the current access token), the open project's Drive folder
+  and the current page persist in `~/.vibecomics/state.json` (mode 0600 in a 0700
+  folder; `VIBECOMICS_HOME` moves it). This is the one place a token is written to
+  disk, unlike the page, and only the CLI does it; `auth logout` revokes it.
+- **Login** is the OAuth device flow (`deviceOAuth.ts`), split in two so it fits
+  an agent's tool calls: `auth login` prints the URL and code and returns;
+  `auth status` finishes it (one poll) once the user has approved. Later runs
+  refresh the access token from the refresh token. `storage.connect` (the GIS
+  popup) is unavailable in the CLI.
+- **Per command** (`src/cli/nodeSession.ts`): refresh the login, load the open
+  project from Drive (skipped for commands that do not need it), call the API,
+  and save `project.json` back if anything changed (`savedAt`/`updatedAt`
+  set as `useProjectSaver` does). There is no autosave timer and no preview
+  screen (`page.openPreview` fails with an explanation). Run commands one at a
+  time: two at once would each save their own copy.
+- **Thumbnails:** there is no canvas in Node, so the CLI cannot make a
+  thumbnail; agents pass one (`--thumbnail`), as the guide says.
+- **Tests** (`src/cli/cli.test.ts`) run the real CLI against
+  `src/cli/testing/fakeGoogle.ts`, an in-memory `fetch` standing in for Google's
+  OAuth and Drive endpoints.

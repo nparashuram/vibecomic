@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { installComicBuilder, uninstallComicBuilder } from './ai/actions';
 import type { ActionResult, ComicBuilderDeps } from './ai/deps';
+import { createMediaDeps, createOrOpenProject } from './ai/storageDeps';
 import EditorScreen from './components/EditorScreen';
 import { initialTab } from './components/editorTabs';
 import type { EditorTab } from './components/editorTabs';
@@ -17,7 +18,7 @@ import {
   ensureProjectFolder,
   hasDriveAccess,
   listProjectFolders,
-  ProjectFileMissingError,
+  loadProjectJson,
   requestDeviceAccess,
   requestDriveAccess,
   saveProjectJson,
@@ -26,25 +27,22 @@ import {
 } from './drive/driveClient';
 import type { DeviceCodeInfo, ProjectFolder } from './drive/driveClient';
 import { loadProject } from './drive/projectStore';
-import { removeMedia } from './state/media';
-import type { MediaRemoval } from './state/media';
-import { createBlankProject } from './state/project';
 import { useProjectSaver } from './state/useProjectSaver';
-import type { ComicProject, MediaItem } from './types/comic';
-import { DEFAULT_PAGE_SIZE } from './types/comic';
+import type { ComicProject } from './types/comic';
 import { errorMessage } from './utils/errors';
-import { dataUrlToFile, readFileAsDataUrl } from './utils/files';
-import { driveFileUrl } from './utils/driveUrl';
-import { newId } from './utils/id';
-import { makeThumbnail, thumbnailName } from './utils/thumbnail';
+import { makeThumbnail } from './utils/thumbnail';
 
 type Screen = 'splash' | 'tiles' | 'editor';
 
-/** Put a thumbnail of `item` in the project folder; returns its Drive file id. */
-async function storeThumbnail(folderId: string, item: MediaItem, thumbnail: File): Promise<string> {
-  const name = thumbnailName(item.name, thumbnail.type);
-  return (await uploadImage(folderId, thumbnail, name)).id;
-}
+/** The Drive calls the ComicBuilder deps make: the page's own token and fetch. */
+const drive = {
+  uploadImage,
+  trashFile,
+  downloadFile,
+  ensureProjectFolder,
+  loadProjectJson,
+  saveProjectJson,
+};
 
 export default function App() {
   const [screen, setScreen] = useState<Screen>('splash');
@@ -204,23 +202,15 @@ export default function App() {
       listStorageProjects: listProjectFolders,
 
       createStorageProject: async (name, pageSize) => {
-        const title = name.trim();
-        if (!title) throw new Error('Project name is required.');
-        const folder = await ensureProjectFolder(title);
-
-        let existing: ComicProject | null = null;
-        try {
-          existing = await loadProject(folder.id);
-        } catch (e) {
-          // Only a folder without a project.json gets a fresh one; never overwrite on other errors.
-          if (!(e instanceof ProjectFileMissingError)) throw e;
-        }
-        const created = existing ?? createBlankProject(title, pageSize ?? DEFAULT_PAGE_SIZE);
-        if (!existing) await saveProjectJson(folder.id, created);
-
+        const {
+          folder,
+          project: created,
+          existed,
+          title,
+        } = await createOrOpenProject(drive, name, pageSize);
         showProject(created, folder.id);
-        setStatus(`${existing ? 'Opened' : 'Created'} "${title}".`);
-        return { id: folder.id, name: folder.name };
+        setStatus(`${existed ? 'Opened' : 'Created'} "${title}".`);
+        return folder;
       },
 
       openStorageProject: openFolder,
@@ -242,71 +232,13 @@ export default function App() {
           : { ok: false, error: 'Save failed. Check that Drive is still connected.' };
       },
 
-      downloadStorageMedia: async (id) => {
-        const item = projectRef.current?.metadata.media.find((m) => m.id === id);
-        if (!item) throw new Error(`Media "${id}" not found.`);
-        const dataUrl = await readFileAsDataUrl(await downloadFile(item.driveFileId));
-        return { name: item.name, mimeType: item.mimeType, dataUrl };
-      },
-
-      uploadStorageMedia: async (name, dataUrl, mimeType, thumbnailDataUrl) => {
-        const folderId = folderIdRef.current;
-        if (!folderId) throw new Error('No project folder is open.');
-        const file = dataUrlToFile(dataUrl, name, mimeType);
-        const given = thumbnailDataUrl
-          ? dataUrlToFile(thumbnailDataUrl, name, 'image/png')
-          : undefined;
-        const uploaded = await uploadImage(folderId, file, name);
-        const item: MediaItem = {
-          id: newId('media'),
-          name: uploaded.name,
-          driveFileId: uploaded.id,
-          url: driveFileUrl(uploaded.id),
-          mimeType: uploaded.mimeType || mimeType,
-        };
-        try {
-          const thumbnail = given ?? (await makeThumbnail(file, name));
-          if (thumbnail)
-            item.thumbnailDriveFileId = await storeThumbnail(folderId, item, thumbnail);
-        } catch {
-          // The image is safe; without a thumbnail the UI shows the full file (media.uploadThumbnail can add one).
-        }
-        deps.updateProject((p) => {
-          p.metadata.media.push(item);
-        });
-        return structuredClone(item);
-      },
-
-      uploadStorageThumbnail: async (id, dataUrl) => {
-        const folderId = folderIdRef.current;
-        if (!folderId) throw new Error('No project folder is open.');
-        const item = projectRef.current?.metadata.media.find((m) => m.id === id);
-        if (!item) throw new Error(`Media "${id}" not found.`);
-        const thumbnail = dataUrlToFile(dataUrl, item.name, 'image/png');
-        const previous = item.thumbnailDriveFileId;
-        const thumbnailDriveFileId = await storeThumbnail(folderId, item, thumbnail);
-        deps.updateProject((p) => {
-          const target = p.metadata.media.find((m) => m.id === id);
-          if (target) target.thumbnailDriveFileId = thumbnailDriveFileId;
-        });
-        if (previous) await trashFile(previous).catch(() => undefined);
-        return structuredClone({ ...item, thumbnailDriveFileId });
-      },
-
-      deleteStorageMedia: async (id) => {
-        const item = projectRef.current?.metadata.media.find((m) => m.id === id);
-        if (!item) throw new Error(`Media "${id}" not found.`);
-        // Trash first: if Drive refuses, the project is left as it was.
-        await trashFile(item.driveFileId);
-        if (item.thumbnailDriveFileId) {
-          await trashFile(item.thumbnailDriveFileId).catch(() => undefined);
-        }
-        let removal: MediaRemoval = { layers: 0, entries: 0 };
-        deps.updateProject((p) => {
-          removal = removeMedia(p, id);
-        });
-        return removal;
-      },
+      ...createMediaDeps({
+        getProject: () => projectRef.current,
+        getFolderId: () => folderIdRef.current,
+        updateProject: (mutation) => deps.updateProject(mutation),
+        drive,
+        makeThumbnail,
+      }),
     };
 
     installComicBuilder(deps);

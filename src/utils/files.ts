@@ -1,4 +1,13 @@
-export function readFileAsDataUrl(file: Blob): Promise<string> {
+/** The bytes of a Blob as a data: URL (in the browser and in Node, which has no FileReader). */
+export async function readFileAsDataUrl(file: Blob): Promise<string> {
+  if (typeof FileReader === 'undefined') {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    let binary = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    }
+    return `data:${file.type || 'application/octet-stream'};base64,${btoa(binary)}`;
+  }
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);

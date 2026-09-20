@@ -1,5 +1,6 @@
 import type { MediaRemoval } from '../state/media';
-import type { DeviceCodeInfo, ProjectFolder } from '../drive/driveClient';
+import type { DeviceCodeInfo } from '../drive/deviceOAuth';
+import type { ProjectFolder } from '../drive/driveRest';
 import type { Bubble, ComicProject, Layer, MediaItem, PageSize } from '../types/comic';
 
 /** Result of an action that can fail. */

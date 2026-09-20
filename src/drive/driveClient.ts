@@ -17,26 +17,18 @@
  */
 
 import { getGoogleClientId, getGoogleDeviceClientId, getGoogleDeviceClientSecret } from '../config';
+import { DRIVE_FILE_SCOPE, pollDeviceOnce, startDeviceFlow } from './deviceOAuth';
+import type { DeviceCodeInfo } from './deviceOAuth';
+import { createDriveRest } from './driveRest';
+
+// The REST calls and the device-flow requests live in driveRest.ts and deviceOAuth.ts (no browser
+// APIs, shared with the CLI); these re-exports keep this module the one place the app imports from.
+export { ProjectFileMissingError } from './driveRest';
+export type { ProjectFolder } from './driveRest';
+export type { DeviceCodeInfo } from './deviceOAuth';
 
 const GIS_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
-const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
-const DRIVE_API = 'https://www.googleapis.com/drive/v3';
-const DRIVE_UPLOAD_API = 'https://www.googleapis.com/upload/drive/v3';
-const FOLDER_MIME_TYPE = 'application/vnd.google-apps.folder';
-const PROJECT_FILE_NAME = 'project.json';
 const TOKEN_EXPIRY_MARGIN_MS = 60_000;
-
-/** Thrown when a Drive folder has no project.json yet. */
-export class ProjectFileMissingError extends Error {}
-
-export interface ProjectFolder {
-  id: string;
-  name: string;
-}
-
-interface DriveFileMeta extends ProjectFolder {
-  mimeType: string;
-}
 
 // ---------------------------------------------------------------------------
 // Access token
@@ -151,56 +143,12 @@ export async function disconnectDrive(): Promise<void> {
 // OAuth device flow (RFC 8628)
 // ---------------------------------------------------------------------------
 
-const DEVICE_CODE_URL = 'https://oauth2.googleapis.com/device/code';
-const DEVICE_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
-
-const DEVICE_FLOW_ERRORS: Record<string, string> = {
-  access_denied: 'The user denied the device authorization request.',
-  expired_token: 'The device code expired before approval. Start over.',
-};
-
-/** What the user needs to approve the request on any other device. */
-export interface DeviceCodeInfo {
-  /** e.g. https://www.google.com/device */
-  url: string;
-  /** e.g. "ABCD-EFGH" */
-  code: string;
-  expiresInSeconds: number;
-}
-
-interface OAuthError {
-  error?: string;
-  error_description?: string;
-}
-
-interface DeviceCodeResponse extends OAuthError {
-  device_code: string;
-  user_code: string;
-  verification_url: string;
-  expires_in: number;
-  interval?: number;
-}
-
-interface DeviceTokenResponse extends OAuthError {
-  access_token?: string;
-  expires_in?: number;
-}
-
-/** POST a form and parse the JSON body; Google reports OAuth errors in the body of non-2xx replies. */
-async function postForm<T>(url: string, params: Record<string, string>): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams(params),
-  });
-  return (await res.json()) as T;
-}
+const DEVICE_EXPIRED_MESSAGE = 'The device code expired before approval. Start over.';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function pollDeviceToken(
-  credentials: { clientId: string; clientSecret: string },
+  client: { clientId: string; clientSecret: string },
   deviceCode: string,
   intervalSeconds: number,
   expiresInSeconds: number,
@@ -209,34 +157,16 @@ async function pollDeviceToken(
   const deadline = Date.now() + expiresInSeconds * 1000;
   for (;;) {
     if (signal.aborted) throw new Error('Device authorization was cancelled.');
-    if (Date.now() >= deadline) throw new Error(DEVICE_FLOW_ERRORS.expired_token);
+    if (Date.now() >= deadline) throw new Error(DEVICE_EXPIRED_MESSAGE);
     await sleep(intervalSeconds * 1000);
 
-    let data: DeviceTokenResponse;
-    try {
-      data = await postForm<DeviceTokenResponse>(DEVICE_TOKEN_URL, {
-        client_id: credentials.clientId,
-        client_secret: credentials.clientSecret,
-        device_code: deviceCode,
-        grant_type: DEVICE_GRANT_TYPE,
-      });
-    } catch {
-      continue; // transient network error: keep polling until the deadline
-    }
-
-    if (data.access_token) {
-      storeToken(data.access_token, data.expires_in);
+    const result = await pollDeviceOnce(client, deviceCode);
+    if (result.status === 'granted') {
+      storeToken(result.accessToken, result.expiresIn);
       return;
     }
-    if (data.error === 'authorization_pending') continue;
-    if (data.error === 'slow_down') {
-      intervalSeconds += 5;
-      continue;
-    }
-    throw new Error(
-      DEVICE_FLOW_ERRORS[data.error ?? ''] ??
-        `Device authorization failed: ${data.error_description || data.error || 'unknown error'}.`
-    );
+    if (result.status === 'failed') throw new Error(result.message);
+    if (result.slowDown) intervalSeconds += 5;
   }
 }
 
@@ -260,28 +190,18 @@ export async function requestDeviceAccess(): Promise<DeviceCodeInfo> {
   }
   cancelDeviceAccess();
 
-  const data = await postForm<DeviceCodeResponse>(DEVICE_CODE_URL, {
-    client_id: clientId,
-    scope: DRIVE_FILE_SCOPE,
-  });
-  if (data.error || !data.device_code) {
-    throw new Error(
-      `Could not start device authorization: ${data.error_description || data.error || 'unknown error'}.`
-    );
-  }
-
-  const expiresInSeconds = Number(data.expires_in) || 1800;
+  const grant = await startDeviceFlow(clientId);
   const controller = new AbortController();
   const promise = pollDeviceToken(
     { clientId, clientSecret },
-    data.device_code,
-    Number(data.interval) || 5,
-    expiresInSeconds,
+    grant.deviceCode,
+    grant.intervalSeconds,
+    grant.info.expiresInSeconds,
     controller.signal
   );
   promise.catch(() => undefined); // awaiters still see the rejection
   activeDevicePoll = { promise, cancel: () => controller.abort() };
-  return { url: data.verification_url, code: data.user_code, expiresInSeconds };
+  return grant.info;
 }
 
 /** Resolves once the pending device authorization completes; rejects on denial, expiry or cancel. */
@@ -294,130 +214,12 @@ export function awaitDeviceAccess(): Promise<void> {
 // Drive API
 // ---------------------------------------------------------------------------
 
-async function driveRequest(url: string, init: RequestInit = {}): Promise<Response> {
-  const accessToken = getAccessToken();
-  if (!accessToken) throw new Error('Not connected to Google Drive.');
-  const res = await fetch(url, {
-    ...init,
-    headers: { Authorization: `Bearer ${accessToken}`, ...init.headers },
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`Drive API error ${res.status}: ${body.slice(0, 200)}`);
-  }
-  return res;
-}
+const drive = createDriveRest({ getToken: getAccessToken });
 
-async function queryFiles<T>(query: string, fields: string, params = ''): Promise<T[]> {
-  const res = await driveRequest(
-    `${DRIVE_API}/files?q=${encodeURIComponent(query)}&fields=files(${fields})${params}`
-  );
-  return ((await res.json()).files ?? []) as T[];
-}
-
-async function createFile(
-  metadata: object,
-  content: Blob | string,
-  contentType: string
-): Promise<DriveFileMeta> {
-  const boundary = `cb-${Date.now()}`;
-  const body = new Blob(
-    [
-      `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`,
-      JSON.stringify(metadata),
-      `\r\n--${boundary}\r\nContent-Type: ${contentType}\r\n\r\n`,
-      content,
-      `\r\n--${boundary}--`,
-    ],
-    { type: `multipart/related; boundary=${boundary}` }
-  );
-  const res = await driveRequest(
-    `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType`,
-    { method: 'POST', body }
-  );
-  return (await res.json()) as DriveFileMeta;
-}
-
-/** Folders this app created (the `drive.file` scope hides everything else). */
-export function listProjectFolders(): Promise<ProjectFolder[]> {
-  return queryFiles<ProjectFolder>(
-    `mimeType='${FOLDER_MIME_TYPE}' and trashed=false`,
-    'id,name',
-    '&orderBy=name&pageSize=100'
-  );
-}
-
-/** Find (or create) the folder that holds a comic's files. */
-export async function ensureProjectFolder(name: string): Promise<DriveFileMeta> {
-  const escaped = name.replace(/'/g, "\\'");
-  const [existing] = await queryFiles<DriveFileMeta>(
-    `mimeType='${FOLDER_MIME_TYPE}' and name='${escaped}' and trashed=false`,
-    'id,name,mimeType',
-    '&pageSize=1'
-  );
-  if (existing) return existing;
-
-  const res = await driveRequest(`${DRIVE_API}/files?fields=id,name,mimeType`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, mimeType: FOLDER_MIME_TYPE }),
-  });
-  return (await res.json()) as DriveFileMeta;
-}
-
-export function uploadImage(folderId: string, file: File, name?: string): Promise<DriveFileMeta> {
-  return createFile(
-    { name: name || file.name, parents: [folderId] },
-    file,
-    file.type || 'image/png'
-  );
-}
-
-/** Move a file to the Drive trash (recoverable there). A file that is already gone counts as trashed. */
-export async function trashFile(fileId: string): Promise<void> {
-  try {
-    await driveRequest(`${DRIVE_API}/files/${fileId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ trashed: true }),
-    });
-  } catch (e) {
-    if (!(e instanceof Error && e.message.startsWith('Drive API error 404'))) throw e;
-  }
-}
-
-export async function downloadFile(fileId: string): Promise<Blob> {
-  const res = await driveRequest(`${DRIVE_API}/files/${fileId}?alt=media`);
-  return await res.blob();
-}
-
-async function findProjectFile(folderId: string): Promise<{ id: string } | undefined> {
-  const [file] = await queryFiles<{ id: string }>(
-    `'${folderId}' in parents and name='${PROJECT_FILE_NAME}' and trashed=false`,
-    'id',
-    '&pageSize=1'
-  );
-  return file;
-}
-
-/** Create or overwrite project.json in the project folder. */
-export async function saveProjectJson(folderId: string, project: unknown): Promise<void> {
-  const json = JSON.stringify(project, null, 2);
-  const existing = await findProjectFile(folderId);
-  if (existing) {
-    await driveRequest(`${DRIVE_UPLOAD_API}/files/${existing.id}?uploadType=media`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: json,
-    });
-  } else {
-    await createFile({ name: PROJECT_FILE_NAME, parents: [folderId] }, json, 'application/json');
-  }
-}
-
-export async function loadProjectJson(folderId: string): Promise<unknown> {
-  const file = await findProjectFile(folderId);
-  if (!file) throw new ProjectFileMissingError('No project.json found in this Drive folder.');
-  const res = await driveRequest(`${DRIVE_API}/files/${file.id}?alt=media`);
-  return await res.json();
-}
+export const listProjectFolders = drive.listProjectFolders;
+export const ensureProjectFolder = drive.ensureProjectFolder;
+export const uploadImage = drive.uploadImage;
+export const trashFile = drive.trashFile;
+export const downloadFile = drive.downloadFile;
+export const saveProjectJson = drive.saveProjectJson;
+export const loadProjectJson = drive.loadProjectJson;
