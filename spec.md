@@ -133,10 +133,8 @@ Google Drive API ◄── OAuth token (page memory) ── saveProjectJson()
      height is remembered per browser (localStorage) and the
      closed sheet's content is inert (unfocusable). The page area takes whatever
      room the sheet leaves; crossing the breakpoint swaps the layout in place.
-   - **Inspector**, top to bottom: **Page** (always shown, even when no panel is
-     highlighted): the **Page prompt** box, the intent of the whole page
-     (`PageDetails`, `page.update`); then, for the highlighted panel, the
-     **Panel prompt** box (`panels.update`) and **Bubbles**
+   - **Inspector** (for the highlighted panel), top to bottom: the **Panel
+     prompt** box (`panels.update`), **Bubbles**
      ("+ Speech / Thought / Caption" and a row per bubble), **Layers** (a row
      per layer, top of the stack first, with a ≡ handle to drag it into a new position (the rows stay in place in the DOM and are shown in the new order with CSS `order`, since moving a dragged element would drop its pointer capture), a
      visibility checkbox, a chevron to expand its details, its name to select
@@ -145,7 +143,12 @@ Google Drive API ◄── OAuth token (page memory) ── saveProjectJson()
      type what it should show), **Background** ("Set background", which becomes a
      "Background" row with the same chevron and trash icon). Expanded, a layer shows its name, prompt, its image as a thumbnail
      (or an "Add image" tile when it has none; no file name or pixel size) and opacity; a bubble shows its text and kind. Position, size and rotation are
-     only on the page. Expanding a row and selecting it are independent.
+     only on the page. Expanding a row and selecting it are independent. The
+     last section of the inspector is the **Page prompt** (`PageDetails`,
+     `page.update`), the intent of the whole page: it is **collapsed by
+     default** (a chevron toggle; while collapsed it previews the text in one
+     line), shown whether or not a panel is highlighted, and it keeps its open or
+     closed state while you switch panels and pages.
    - **Media picker** (`MediaPicker`, one component for every place an image is chosen): clicking
      the thumbnail, or "Set background", opens a popup with a thumbnail of every image in the
      project (transparent images on a checkerboard), the current one outlined, and an "Upload

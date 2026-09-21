@@ -143,7 +143,6 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
                   panel ? panelSummary(panels.indexOf(panel) + 1, panel) : 'No panel selected'
                 }
               >
-                <PageDetails page={page} pageIndex={pageIndex} />
                 {panel ? (
                   <PanelInspector
                     page={page}
@@ -155,6 +154,7 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
                 ) : (
                   <p className="text-muted p-3 mb-0 d-none d-md-block">No panel selected</p>
                 )}
+                <PageDetails page={page} pageIndex={pageIndex} />
               </InspectorPane>
             </>
           ) : (
