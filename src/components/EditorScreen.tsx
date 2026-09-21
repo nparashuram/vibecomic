@@ -1,5 +1,7 @@
+import type { ReactNode } from 'react';
 import type { ComicProject } from '../types/comic';
 import type { SaveState } from '../state/useProjectSaver';
+import ConflictDot from './ConflictDot';
 import EditorNavbar from './EditorNavbar';
 import { EDITOR_TABS } from './editorTabs';
 import type { EditorTab } from './editorTabs';
@@ -14,6 +16,11 @@ interface Props {
   onTabChange: (tab: EditorTab) => void;
   saveState: SaveState;
   dirty: boolean;
+  /** The tabs, and the pages (by id), that hold a conflict with changes made elsewhere: they get a dot. */
+  conflictTabs: Set<EditorTab>;
+  conflictPageIds: Set<string>;
+  /** The footer that shows the conflicts, while there are any. */
+  conflictBar: ReactNode;
 }
 
 /** Navbar, tab bar and the active tab, laid out to fill the viewport exactly. */
@@ -24,6 +31,9 @@ export default function EditorScreen({
   onTabChange,
   saveState,
   dirty,
+  conflictTabs,
+  conflictPageIds,
+  conflictBar,
 }: Props) {
   return (
     <div className="position-fixed top-0 bottom-0 start-0 end-0 d-flex flex-column bg-light">
@@ -33,6 +43,7 @@ export default function EditorScreen({
         onTabChange={onTabChange}
         saveState={saveState}
         dirty={dirty}
+        conflictTabs={conflictTabs}
       />
 
       <ul className="nav nav-tabs px-3 pt-2 bg-white border-bottom d-none d-md-flex mb-0">
@@ -43,6 +54,7 @@ export default function EditorScreen({
               onClick={() => onTabChange(t.id)}
             >
               {t.label}
+              {conflictTabs.has(t.id) && <ConflictDot className="ms-1 align-middle" />}
             </button>
           </li>
         ))}
@@ -54,6 +66,7 @@ export default function EditorScreen({
           pageIndex={pageIndex}
           pageSize={project.metadata.pageSize}
           media={project.metadata.media}
+          conflictPageIds={conflictPageIds}
         />
       ) : (
         <div className="flex-grow-1 overflow-auto" style={{ minHeight: 0 }}>
@@ -64,6 +77,8 @@ export default function EditorScreen({
           {tab === 'scenes' && <StoryTab key={project.id} project={project} kind="scenes" />}
         </div>
       )}
+
+      {conflictBar}
     </div>
   );
 }

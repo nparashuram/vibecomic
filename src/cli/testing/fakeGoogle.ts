@@ -11,6 +11,8 @@ interface FakeFile {
   parents: string[];
   trashed: boolean;
   content: Buffer;
+  /** Drive's counter for the file: up by one on every change. */
+  version: number;
 }
 
 const FOLDER = 'application/vnd.google-apps.folder';
@@ -20,6 +22,8 @@ export function createFakeGoogle(now: () => number = Date.now) {
   const accessTokens = new Map<string, number>(); // token -> expiry (ms)
   const refreshTokens = new Set<string>();
   let counter = 0;
+  /** Runs once, right after the next time project.json's content is read. */
+  let afterProjectRead: (() => void) | null = null;
   let approved = false;
   let denied = false;
   const calls: string[] = [];
@@ -100,7 +104,12 @@ export function createFakeGoogle(now: () => number = Date.now) {
       return reply({ error: { message: 'Invalid credentials' } }, 401);
 
     const idMatch = /\/files\/([^/?]+)/.exec(url.pathname);
-    const meta = (f: FakeFile) => ({ id: f.id, name: f.name, mimeType: f.mimeType });
+    const meta = (f: FakeFile) => ({
+      id: f.id,
+      name: f.name,
+      mimeType: f.mimeType,
+      version: String(f.version),
+    });
 
     if (method === 'GET' && !idMatch) {
       return reply({ files: listFiles(url.searchParams.get('q') ?? '').map(meta) });
@@ -108,9 +117,15 @@ export function createFakeGoogle(now: () => number = Date.now) {
     if (method === 'GET' && idMatch) {
       const file = files.get(idMatch[1]);
       if (!file) return reply({ error: 'not found' }, 404);
-      return new Response(new Uint8Array(file.content), {
+      const response = new Response(new Uint8Array(file.content), {
         headers: { 'Content-Type': file.mimeType },
       });
+      if (file.name === 'project.json' && afterProjectRead) {
+        const run = afterProjectRead;
+        afterProjectRead = null;
+        run();
+      }
+      return response;
     }
     if (method === 'POST' && url.pathname.startsWith('/upload/')) {
       const type = new Headers(init.headers).get('Content-Type') ?? (init.body as Blob).type;
@@ -126,6 +141,7 @@ export function createFakeGoogle(now: () => number = Date.now) {
         parents: metadata.parents ?? [],
         trashed: false,
         content,
+        version: 1,
       };
       files.set(file.id, file);
       return reply(meta(file));
@@ -139,6 +155,7 @@ export function createFakeGoogle(now: () => number = Date.now) {
         parents: [],
         trashed: false,
         content: Buffer.alloc(0),
+        version: 1,
       };
       files.set(file.id, file);
       return reply(meta(file));
@@ -148,6 +165,7 @@ export function createFakeGoogle(now: () => number = Date.now) {
       if (!file) return reply({ error: 'not found' }, 404);
       if (url.pathname.startsWith('/upload/')) file.content = Buffer.from(init.body as string);
       else if (JSON.parse(init.body as string).trashed) file.trashed = true;
+      file.version++;
       return reply(meta(file));
     }
     return reply({ error: `unhandled ${method} ${url.pathname}` }, 500);
@@ -171,6 +189,28 @@ export function createFakeGoogle(now: () => number = Date.now) {
     /** Google forgets every refresh token (the user revoked access). */
     revokeAll: () => refreshTokens.clear(),
     calls,
+    /**
+     * Another system saves the project in `folderId`: `change` edits the stored project.json, and
+     * Drive's version goes up, exactly as if a browser or another CLI had written it.
+     */
+    externalEdit: (folderId: string, change: (project: any) => void) => {
+      const file = [...files.values()].find(
+        (f) => f.name === 'project.json' && f.parents.includes(folderId) && !f.trashed
+      )!;
+      const project = JSON.parse(file.content.toString('utf8'));
+      change(project);
+      file.content = Buffer.from(JSON.stringify(project, null, 2));
+      file.version++;
+    },
+    /** Run `run` once, right after the next read of a project.json (so a change lands between a load and a save). */
+    afterNextProjectRead: (run: () => void) => {
+      afterProjectRead = run;
+    },
+    /** The Drive version of the project.json in a folder. */
+    versionOf: (folderId: string) =>
+      [...files.values()].find(
+        (f) => f.name === 'project.json' && f.parents.includes(folderId) && !f.trashed
+      )?.version,
     /** The project.json stored in a folder, parsed. */
     projectIn: (folderId: string) => {
       const file = [...files.values()].find(

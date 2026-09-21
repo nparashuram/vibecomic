@@ -20,6 +20,24 @@ export interface ProjectFolder {
 
 export interface DriveFileMeta extends ProjectFolder {
   mimeType: string;
+  /** Drive's counter for the file: it goes up on every change, so it tells whether a file changed. */
+  version?: string;
+}
+
+/**
+ * Thrown when project.json on Drive is no longer the version that was loaded, i.e. somebody else
+ * (another browser, the CLI) saved since. Nothing was written.
+ */
+export class ProjectChangedError extends Error {
+  constructor(readonly currentVersion: string | null) {
+    super('The project was changed on Google Drive since it was loaded.');
+  }
+}
+
+/** A project.json as read from Drive, with the Drive version it had. */
+export interface ProjectFile {
+  json: unknown;
+  version: string | null;
 }
 
 export interface DriveRestOptions {
@@ -68,16 +86,18 @@ export function createDriveRest({ getToken, fetch: fetchImpl = fetch }: DriveRes
       { type: `multipart/related; boundary=${boundary}` }
     );
     const res = await driveRequest(
-      `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType`,
+      `${DRIVE_UPLOAD_API}/files?uploadType=multipart&fields=id,name,mimeType,version`,
       { method: 'POST', body }
     );
     return (await res.json()) as DriveFileMeta;
   }
 
-  async function findProjectFile(folderId: string): Promise<{ id: string } | undefined> {
-    const [file] = await queryFiles<{ id: string }>(
+  async function findProjectFile(
+    folderId: string
+  ): Promise<{ id: string; version?: string } | undefined> {
+    const [file] = await queryFiles<{ id: string; version?: string }>(
       `'${folderId}' in parents and name='${PROJECT_FILE_NAME}' and trashed=false`,
-      'id',
+      'id,version',
       '&pageSize=1'
     );
     return file;
@@ -137,30 +157,43 @@ export function createDriveRest({ getToken, fetch: fetchImpl = fetch }: DriveRes
       return await res.blob();
     },
 
-    /** Create or overwrite project.json in the project folder. */
-    async saveProjectJson(folderId: string, project: unknown): Promise<void> {
+    /**
+     * Create or overwrite project.json in the project folder and return its new Drive version.
+     * When `expectVersion` is given (the version this copy was loaded from), the write is refused
+     * with a ProjectChangedError if the file has changed since. Drive cannot make the check and the
+     * write one step, so a save landing in the few milliseconds between them can still slip through.
+     */
+    async saveProjectJson(
+      folderId: string,
+      project: unknown,
+      expectVersion?: string | null
+    ): Promise<string | null> {
       const json = JSON.stringify(project, null, 2);
       const existing = await findProjectFile(folderId);
       if (existing) {
-        await driveRequest(`${DRIVE_UPLOAD_API}/files/${existing.id}?uploadType=media`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: json,
-        });
-      } else {
-        await createFile(
-          { name: PROJECT_FILE_NAME, parents: [folderId] },
-          json,
-          'application/json'
+        if (expectVersion && existing.version && existing.version !== expectVersion) {
+          throw new ProjectChangedError(existing.version);
+        }
+        const res = await driveRequest(
+          `${DRIVE_UPLOAD_API}/files/${existing.id}?uploadType=media&fields=id,version`,
+          { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: json }
         );
+        return ((await res.json()) as { version?: string }).version ?? null;
       }
+      const created = await createFile(
+        { name: PROJECT_FILE_NAME, parents: [folderId] },
+        json,
+        'application/json'
+      );
+      return created.version ?? null;
     },
 
-    async loadProjectJson(folderId: string): Promise<unknown> {
+    /** Read project.json from the project folder, with the Drive version it has now. */
+    async loadProjectFile(folderId: string): Promise<ProjectFile> {
       const file = await findProjectFile(folderId);
       if (!file) throw new ProjectFileMissingError('No project.json found in this Drive folder.');
       const res = await driveRequest(`${DRIVE_API}/files/${file.id}?alt=media`);
-      return await res.json();
+      return { json: await res.json(), version: file.version ?? null };
     },
   };
 }

@@ -57,6 +57,14 @@ is entirely your responsibility.**
   one to a file when you need to see it or pass it to a generator).
 - Every command saves its changes to Drive before it exits, so there is nothing
   to save at the end. Run commands one at a time, never in parallel.
+- The user may have the project open in the app while you work. Before saving,
+  the CLI checks whether they saved in the meantime: if so, their changes and
+  yours are merged automatically (changes to different things simply combine). If
+  they clash (you and they changed the same thing, or one of you deleted what the
+  other changed), the command fails, saves nothing and says what clashed. Then
+  fetch the project again (the next command does), look at what the user
+  changed, and apply your change again on top of it, or ask the user which
+  version to keep.
 
 ## The workflow
 

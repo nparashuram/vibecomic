@@ -134,25 +134,34 @@ export function createMediaDeps(host: MediaHost): MediaDeps {
  * project.json gets a fresh one, and no other error ever overwrites anything.
  */
 export async function createOrOpenProject(
-  drive: Pick<DriveRest, 'ensureProjectFolder' | 'loadProjectJson' | 'saveProjectJson'>,
+  drive: Pick<DriveRest, 'ensureProjectFolder' | 'loadProjectFile' | 'saveProjectJson'>,
   name: string,
   pageSize?: PageSize
-): Promise<{ folder: ProjectFolder; project: ComicProject; existed: boolean; title: string }> {
+): Promise<{
+  folder: ProjectFolder;
+  project: ComicProject;
+  /** The Drive version of project.json, to detect later changes by somebody else. */
+  version: string | null;
+  existed: boolean;
+  title: string;
+}> {
   const title = name.trim();
   if (!title) throw new Error('Project name is required.');
   const folder = await drive.ensureProjectFolder(title);
 
-  let existing: ComicProject | null = null;
+  let existing: { project: ComicProject; version: string | null } | null = null;
   try {
-    existing = parseProject(await drive.loadProjectJson(folder.id));
+    const file = await drive.loadProjectFile(folder.id);
+    existing = { project: parseProject(file.json), version: file.version };
   } catch (e) {
     if (!(e instanceof ProjectFileMissingError)) throw e;
   }
-  const project = existing ?? createBlankProject(title, pageSize ?? DEFAULT_PAGE_SIZE);
-  if (!existing) await drive.saveProjectJson(folder.id, project);
+  const project = existing?.project ?? createBlankProject(title, pageSize ?? DEFAULT_PAGE_SIZE);
+  const version = existing ? existing.version : await drive.saveProjectJson(folder.id, project);
   return {
     folder: { id: folder.id, name: folder.name },
     project,
+    version,
     existed: existing !== null,
     title,
   };

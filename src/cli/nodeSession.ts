@@ -15,8 +15,10 @@ import {
   startDeviceFlow,
 } from '../drive/deviceOAuth';
 import type { DeviceClient, DeviceCodeInfo } from '../drive/deviceOAuth';
-import { createDriveRest } from '../drive/driveRest';
+import { ProjectChangedError, createDriveRest } from '../drive/driveRest';
 import type { ProjectFolder } from '../drive/driveRest';
+import { mergeProjects } from '../state/merge';
+import type { Conflict } from '../state/merge';
 import type { ComicProject } from '../types/comic';
 import { errorMessage } from '../utils/errors';
 import { StateStore } from './state';
@@ -44,6 +46,27 @@ export interface AuthReport {
   next?: string;
 }
 
+/** Nothing was saved because the project on Drive changed and the two sets of changes clash. */
+export class ConflictError extends Error {
+  constructor(readonly conflicts: Conflict[]) {
+    const lines = conflicts.flatMap((c) => [
+      `  - ${c.label}`,
+      `      yours:  ${c.text.ours}`,
+      `      theirs: ${c.text.theirs}`,
+      `      before: ${c.text.base}`,
+    ]);
+    super(
+      [
+        `Nothing was saved: the project was changed on Google Drive since this command read it, and ${
+          conflicts.length === 1 ? 'that change conflicts' : 'those changes conflict'
+        } with this one:`,
+        ...lines,
+        'Fetch the project again (the next command does) and apply this change again on top of it.',
+      ].join('\n')
+    );
+  }
+}
+
 const LOGIN_HINT = 'Run "vibecomics auth login" and have the user approve it.';
 
 export function createNodeSession(options: NodeSessionOptions) {
@@ -54,6 +77,10 @@ export function createNodeSession(options: NodeSessionOptions) {
 
   let state = store.read();
   let project: ComicProject | null = null;
+  /** The project as it was when loaded or last saved: what a merge starts from. */
+  let base: ComicProject | null = null;
+  /** The Drive version of project.json that `base` came from. */
+  let version: string | null = null;
   let dirty = false;
   let pageIndex = state.pageIndex ?? 0;
 
@@ -220,8 +247,14 @@ export function createNodeSession(options: NodeSessionOptions) {
 
   const folderId = (): string | null => state.project?.id ?? null;
 
-  function showProject(opened: ComicProject, folder: ProjectFolder): void {
+  function showProject(
+    opened: ComicProject,
+    folder: ProjectFolder,
+    openedVersion: string | null
+  ): void {
     project = opened;
+    base = structuredClone(opened);
+    version = openedVersion;
     dirty = false;
     pageIndex = 0;
     setState((s) => ({ ...s, project: { id: folder.id, name: folder.name }, pageIndex: 0 }));
@@ -229,26 +262,53 @@ export function createNodeSession(options: NodeSessionOptions) {
 
   function dropProject(): void {
     project = null;
+    base = null;
     dirty = false;
     pageIndex = 0;
     setState((s) => ({ ...s, project: undefined, pageIndex: undefined }));
   }
 
-  /** Write the project to Drive if the command changed it. */
+  /**
+   * Write the project to Drive if the command changed it. If somebody else saved since it was
+   * loaded, their changes are merged into ours first; if the two clash, nothing is written.
+   */
   async function save(): Promise<void> {
     const id = folderId();
-    if (!project || !id || !dirty) return;
-    const savedAt = new Date(now()).toISOString();
-    await drive.saveProjectJson(id, { ...project, savedAt, updatedAt: savedAt });
-    project = { ...project, savedAt };
-    dirty = false;
+    if (!project || !base || !id || !dirty) return;
+    for (let attempt = 0; ; attempt++) {
+      const savedAt = new Date(now()).toISOString();
+      try {
+        version = await drive.saveProjectJson(
+          id,
+          { ...project, savedAt, updatedAt: savedAt },
+          version
+        );
+        project = { ...project, savedAt };
+        base = structuredClone(project);
+        dirty = false;
+        return;
+      } catch (e) {
+        if (!(e instanceof ProjectChangedError) || attempt >= 3) throw e;
+        const file = await drive.loadProjectFile(id);
+        const theirs = parseProject(file.json);
+        const { merged, conflicts } = mergeProjects(base, project, theirs);
+        if (conflicts.length > 0) throw new ConflictError(conflicts);
+        // Their changes are now part of ours: write the merged project on top of their version.
+        project = merged;
+        base = theirs;
+        version = file.version;
+      }
+    }
   }
 
   /** Load the open project from Drive, if there is one. */
   async function loadOpenProject(): Promise<void> {
     const id = folderId();
     if (!id || project) return;
-    project = parseProject(await drive.loadProjectJson(id));
+    const file = await drive.loadProjectFile(id);
+    project = parseProject(file.json);
+    base = structuredClone(project);
+    version = file.version;
   }
 
   const media = createMediaDeps({
@@ -309,13 +369,14 @@ export function createNodeSession(options: NodeSessionOptions) {
 
     createStorageProject: async (name, pageSize) => {
       const created = await createOrOpenProject(drive, name, pageSize);
-      showProject(created.project, created.folder);
+      showProject(created.project, created.folder, created.version);
       return created.folder;
     },
 
     openStorageProject: async (folder) => {
       try {
-        showProject(parseProject(await drive.loadProjectJson(folder.id)), folder);
+        const file = await drive.loadProjectFile(folder.id);
+        showProject(parseProject(file.json), folder, file.version);
         return { ok: true };
       } catch (e) {
         return { ok: false, error: `Could not open "${folder.name}": ${errorMessage(e)}` };

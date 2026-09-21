@@ -23,7 +23,7 @@ import { createDriveRest } from './driveRest';
 
 // The REST calls and the device-flow requests live in driveRest.ts and deviceOAuth.ts (no browser
 // APIs, shared with the CLI); these re-exports keep this module the one place the app imports from.
-export { ProjectFileMissingError } from './driveRest';
+export { ProjectChangedError, ProjectFileMissingError } from './driveRest';
 export type { ProjectFolder } from './driveRest';
 export type { DeviceCodeInfo } from './deviceOAuth';
 
@@ -222,4 +222,4 @@ export const uploadImage = drive.uploadImage;
 export const trashFile = drive.trashFile;
 export const downloadFile = drive.downloadFile;
 export const saveProjectJson = drive.saveProjectJson;
-export const loadProjectJson = drive.loadProjectJson;
+export const loadProjectFile = drive.loadProjectFile;

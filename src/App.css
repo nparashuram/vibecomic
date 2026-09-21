@@ -173,6 +173,11 @@
   }
 }
 
+/* A small read-only page inside the conflict bar. */
+.conflict-preview .page-area {
+  padding: 6px;
+}
+
 /* ---- Layers and bubbles -------------------------------------------------
    Only the highlighted panel uses z-index (selected layer 4, bubbles 5, pointers 6, handles 12),
    and it is painted last, so its content always sits above every other panel's canvas, number

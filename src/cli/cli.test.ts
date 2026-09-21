@@ -569,3 +569,127 @@ test('pages can be reordered from the CLI, and the cover stays first', async () 
   assert.equal(await order(), before);
   assert.match((await run('help')).out, /page move\s+Move a page to a new position/);
 });
+
+test('a change made elsewhere is merged in when it does not clash', async () => {
+  const { run, login, google } = setup();
+  await login();
+  const { id: folderId } = (await run('storage', 'createProject', 'Shared')).json();
+  await run('page', 'add', '--title', 'X');
+
+  // Another system edits the outline right after this command has read the project.
+  google.afterNextProjectRead(() =>
+    google.externalEdit(folderId, (p) => {
+      p.metadata.outline = 'Written elsewhere';
+    })
+  );
+  const result = await run('page', 'update', '1', '--prompt', 'Mine');
+  assert.equal(result.code, 0, result.err);
+  const saved = google.projectIn(folderId);
+  assert.equal(saved.metadata.outline, 'Written elsewhere'); // theirs survived
+  assert.equal(saved.pages[1].prompt, 'Mine'); // and so did ours
+
+  // A change made between two commands is simply read by the next one.
+  google.externalEdit(folderId, (p) => {
+    p.pages[1].title = 'Renamed elsewhere';
+  });
+  assert.equal((await run('page', 'update', '1', '--prompt', 'After')).code, 0);
+  assert.equal(google.projectIn(folderId).pages[1].title, 'Renamed elsewhere');
+  assert.equal(google.projectIn(folderId).pages[1].prompt, 'After');
+});
+
+test('a clash is reported, nothing is overwritten, and applying it again works', async () => {
+  const { run, login, google } = setup();
+  await login();
+  const { id: folderId } = (await run('storage', 'createProject', 'Shared')).json();
+  await run('page', 'add', '--title', 'X');
+
+  google.afterNextProjectRead(() =>
+    google.externalEdit(folderId, (p) => {
+      p.pages[1].prompt = 'Theirs';
+    })
+  );
+  const clash = await run('page', 'update', '1', '--prompt', 'Ours');
+  assert.equal(clash.code, 1);
+  assert.match(clash.err, /Nothing was saved/);
+  assert.match(clash.err, /Page 1 "X" › prompt/);
+  assert.match(clash.err, /yours: {2}Ours/);
+  assert.match(clash.err, /theirs: Theirs/);
+  assert.match(clash.err, /before: \(not set\)/);
+  assert.match(clash.err, /Fetch the project again.*apply this change again/);
+  assert.equal(google.projectIn(folderId).pages[1].prompt, 'Theirs'); // untouched
+
+  // The next command fetches the current project, so the same change now goes through.
+  const again = await run('page', 'update', '1', '--prompt', 'Ours');
+  assert.equal(again.code, 0, again.err);
+  assert.equal(google.projectIn(folderId).pages[1].prompt, 'Ours');
+});
+
+test('changing something the other side deleted is a conflict', async () => {
+  const { run, login, google } = setup();
+  await login();
+  const { id: folderId } = (await run('storage', 'createProject', 'Shared')).json();
+  const page = (await run('page', 'add', '--title', 'X')).json();
+  const layer = (
+    await run('layers', 'add', page.panels[0].id, '{"name":"Hero","prompt":"Hero"}')
+  ).json();
+
+  google.afterNextProjectRead(() =>
+    google.externalEdit(folderId, (p) => {
+      p.pages[1].panels[0].layers = [];
+    })
+  );
+  const clash = await run(
+    'layers',
+    'update',
+    page.panels[0].id,
+    layer.id,
+    '{"prompt":"Hero, angrier"}'
+  );
+  assert.equal(clash.code, 1);
+  assert.match(clash.err, /Layer "Hero"/);
+  assert.match(clash.err, /yours: {2}changed here/);
+  assert.match(clash.err, /theirs: deleted there/);
+  assert.deepEqual(google.projectIn(folderId).pages[1].panels[0].layers, []);
+});
+
+test('changes that keep landing while the CLI merges are merged too', async () => {
+  const { run, login, google } = setup();
+  await login();
+  const { id: folderId } = (await run('storage', 'createProject', 'Busy')).json();
+  await run('page', 'add', '--title', 'X');
+
+  // One edit after the CLI reads the project, and another right after it re-reads to merge.
+  google.afterNextProjectRead(() => {
+    google.externalEdit(folderId, (p) => {
+      p.metadata.outline = 'First elsewhere';
+    });
+    google.afterNextProjectRead(() =>
+      google.externalEdit(folderId, (p) => {
+        p.pages[1].title = 'Second elsewhere';
+      })
+    );
+  });
+  const result = await run('page', 'update', '1', '--prompt', 'Ours');
+  assert.equal(result.code, 0, result.err);
+  const saved = google.projectIn(folderId);
+  assert.equal(saved.metadata.outline, 'First elsewhere');
+  assert.equal(saved.pages[1].title, 'Second elsewhere');
+  assert.equal(saved.pages[1].prompt, 'Ours');
+});
+
+test('reading and writing keep the Drive version in step, so a lone CLI never conflicts with itself', async () => {
+  const { run, login, google } = setup();
+  await login();
+  const { id: folderId } = (await run('storage', 'createProject', 'Solo')).json();
+  const before = google.versionOf(folderId)!;
+  for (let i = 0; i < 4; i++) {
+    assert.equal((await run('page', 'add', '--title', `P${i}`)).code, 0);
+    assert.equal((await run('metadata', 'setOutline', `outline ${i}`)).code, 0);
+  }
+  assert.equal(google.versionOf(folderId), before + 8); // exactly one write per changing command
+  assert.equal(google.projectIn(folderId).pages.length, 5);
+  // A command that changes nothing writes nothing.
+  await run('page', 'count');
+  await run('page', 'current');
+  assert.equal(google.versionOf(folderId), before + 8);
+});

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { installComicBuilder, uninstallComicBuilder } from './ai/actions';
 import type { ActionResult, ComicBuilderDeps } from './ai/deps';
 import { createMediaDeps, createOrOpenProject } from './ai/storageDeps';
+import ConflictBar from './components/ConflictBar';
 import EditorScreen from './components/EditorScreen';
 import { initialTab } from './components/editorTabs';
 import type { EditorTab } from './components/editorTabs';
@@ -18,7 +19,7 @@ import {
   ensureProjectFolder,
   hasDriveAccess,
   listProjectFolders,
-  loadProjectJson,
+  loadProjectFile,
   requestDeviceAccess,
   requestDriveAccess,
   saveProjectJson,
@@ -27,6 +28,7 @@ import {
 } from './drive/driveClient';
 import type { DeviceCodeInfo, ProjectFolder } from './drive/driveClient';
 import { loadProject } from './drive/projectStore';
+import type { Conflict } from './state/merge';
 import { useProjectSaver } from './state/useProjectSaver';
 import type { ComicProject } from './types/comic';
 import { errorMessage } from './utils/errors';
@@ -40,7 +42,7 @@ const drive = {
   trashFile,
   downloadFile,
   ensureProjectFolder,
-  loadProjectJson,
+  loadProjectFile,
   saveProjectJson,
 };
 
@@ -67,6 +69,8 @@ export default function App() {
     projectRef,
     folderIdRef,
     setProject,
+    replaceProject: replaceWithMerged,
+    updateProject: (mutation) => updateProject(mutation),
     onError: (message) => setStatus(message, true),
   });
 
@@ -80,13 +84,40 @@ export default function App() {
     setPageIndex(index);
   }
 
-  function showProject(opened: ComicProject, folderId: string) {
+  /** Change the open project (a copy is edited, then swapped in); it is then unsaved. */
+  function updateProject(mutation: (project: ComicProject) => void) {
+    const current = projectRef.current;
+    if (!current) throw new Error('No project is open.');
+    const next = structuredClone(current);
+    mutation(next);
+    next.updatedAt = new Date().toISOString();
+    setCurrentProject(next);
+    saver.markDirty();
+  }
+
+  /** Swap in a project merged with somebody else's save, staying on the same page if it still exists. */
+  function replaceWithMerged(merged: ComicProject) {
+    const shownId = projectRef.current?.pages[pageIndexRef.current]?.id;
+    setCurrentProject(merged);
+    const at = merged.pages.findIndex((page) => page.id === shownId);
+    selectPage(at >= 0 ? at : Math.min(pageIndexRef.current, merged.pages.length - 1));
+  }
+
+  /** Go to where a conflict is: its tab and page. */
+  function showConflict(conflict: Conflict) {
+    setTab(conflict.where.tab);
+    const { pageId } = conflict.where;
+    const index = pageId ? (projectRef.current?.pages.findIndex((p) => p.id === pageId) ?? -1) : -1;
+    if (index >= 0) selectPage(index);
+  }
+
+  function showProject(opened: ComicProject, folderId: string, version: string | null) {
     folderIdRef.current = folderId;
     setCurrentProject(opened);
     selectPage(0);
     setPreview(false);
     setTab(initialTab(opened));
-    saver.reset();
+    saver.reset({ project: opened, version });
     setScreen('editor');
   }
 
@@ -119,8 +150,8 @@ export default function App() {
   async function openFolder(folder: ProjectFolder): Promise<ActionResult> {
     setStatus('Loading project…');
     try {
-      const opened = await loadProject(folder.id);
-      showProject(opened, folder.id);
+      const { project: opened, version } = await loadProject(folder.id);
+      showProject(opened, folder.id, version);
       setStatus(`Opened "${opened.title}".`);
       return { ok: true };
     } catch (e) {
@@ -135,15 +166,7 @@ export default function App() {
     const deps: ComicBuilderDeps = {
       getProject: () => projectRef.current,
 
-      updateProject: (mutation) => {
-        const current = projectRef.current;
-        if (!current) throw new Error('No project is open.');
-        const next = structuredClone(current);
-        mutation(next);
-        next.updatedAt = new Date().toISOString();
-        setCurrentProject(next);
-        saver.markDirty();
-      },
+      updateProject,
 
       replaceProject: (replacement) => {
         setCurrentProject(replacement);
@@ -205,10 +228,11 @@ export default function App() {
         const {
           folder,
           project: created,
+          version,
           existed,
           title,
         } = await createOrOpenProject(drive, name, pageSize);
-        showProject(created, folder.id);
+        showProject(created, folder.id, version);
         setStatus(`${existed ? 'Opened' : 'Created'} "${title}".`);
         return folder;
       },
@@ -227,9 +251,14 @@ export default function App() {
 
       flushStorageSave: async () => {
         if (!projectRef.current) return { ok: false, error: 'No project is open.' };
-        return (await saver.save())
-          ? { ok: true }
-          : { ok: false, error: 'Save failed. Check that Drive is still connected.' };
+        if (await saver.save()) return { ok: true };
+        const clashes = saver.pendingConflicts();
+        return {
+          ok: false,
+          error: clashes.length
+            ? `Not saved: the project was changed elsewhere and ${clashes.length} change${clashes.length === 1 ? '' : 's'} clash${clashes.length === 1 ? 'es' : ''} with yours (${clashes.map((c) => c.label).join('; ')}). Choose which to keep at the bottom of the editor.`
+            : 'Save failed. Check that Drive is still connected.',
+        };
       },
 
       ...createMediaDeps({
@@ -264,6 +293,18 @@ export default function App() {
         onTabChange={setTab}
         saveState={saver.saveState}
         dirty={saver.dirty}
+        conflictTabs={new Set(saver.conflicts.map((c) => c.where.tab))}
+        conflictPageIds={new Set(saver.conflicts.flatMap((c) => c.where.pageId ?? []))}
+        conflictBar={
+          saver.conflicts.length > 0 && (
+            <ConflictBar
+              project={project}
+              conflicts={saver.conflicts}
+              onShow={showConflict}
+              onResolve={saver.resolve}
+            />
+          )
+        }
       />
     );
   }

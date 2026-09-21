@@ -196,6 +196,15 @@ export function createComicBuilder(deps: ComicBuilderDeps) {
        * when there are changes; this only hurries it. Does nothing when
        * everything is already saved. Fails ({ ok: false }) when no project is
        * open or Drive is not connected.
+       *
+       * If somebody else (another browser, the command line) saved the project
+       * on Drive since it was opened, their changes are pulled and merged with
+       * yours first, and the merged project is saved: changes to different things
+       * (or different fields of one thing) just combine. If the two clash (the
+       * same field changed differently, or something deleted on one side and
+       * changed on the other), nothing is written: the app shows the conflicts at
+       * the bottom of the editor for the user to settle, and this returns
+       * { ok: false, error } naming them.
        * @returns A promise resolving to { ok, error? }: ok is true when nothing is left unsaved.
        */
       save: (): Promise<ActionResult> => deps.flushStorageSave(),

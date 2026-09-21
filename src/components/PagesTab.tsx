@@ -18,6 +18,8 @@ interface Props {
   pageIndex: number;
   pageSize: PageSize;
   media: MediaItem[];
+  /** Pages (by id) with a conflict: their number gets a dot. */
+  conflictPageIds: Set<string>;
 }
 
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -40,7 +42,7 @@ function AddPageButton({ className }: { className: string }) {
 }
 
 /** Page number rail (left on desktop, footer on mobile), the selected page, and the inspector of its highlighted panel. */
-export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
+export default function PagesTab({ pages, pageIndex, pageSize, media, conflictPageIds }: Props) {
   const [selection, setSelection] = useState<Selection>({ panelId: null });
   const wide = useMediaQuery('(min-width: 768px)');
   const [snap, setSnap] = usePersistentChoice<Snap>('comic-builder:sheet', SNAPS, 'half');
@@ -90,7 +92,13 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
             className="d-flex flex-column flex-grow-1"
             style={{ minHeight: 0, overflowY: 'auto' }}
           >
-            <PageButtons pages={pages} pageIndex={pageIndex} className="mx-2 mb-1 px-0" axis="y" />
+            <PageButtons
+              pages={pages}
+              pageIndex={pageIndex}
+              className="mx-2 mb-1 px-0"
+              axis="y"
+              conflictPageIds={conflictPageIds}
+            />
           </div>
           <AddPageButton className="mx-2 mt-2 px-0" />
         </div>
@@ -183,6 +191,7 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
             pageIndex={pageIndex}
             className="px-3 flex-shrink-0"
             axis="x"
+            conflictPageIds={conflictPageIds}
           />
         </div>
         <AddPageButton className="px-3 flex-shrink-0" />

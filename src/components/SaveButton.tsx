@@ -31,18 +31,20 @@ export default function SaveButton({ state, dirty }: Props) {
   const saving = state === 'saving';
   const title = saving
     ? 'Saving…'
-    : state === 'error'
-      ? 'Save failed. Click to retry'
-      : dirty
-        ? 'Save to Google Drive'
-        : 'All changes saved';
+    : state === 'conflict'
+      ? 'Changes made elsewhere clash with yours: choose which to keep at the bottom'
+      : state === 'error'
+        ? 'Save failed. Click to retry'
+        : dirty
+          ? 'Save to Google Drive'
+          : 'All changes saved';
 
   return (
     <span title={title}>
       <button
         type="button"
         className={`btn btn-sm d-flex align-items-center justify-content-center ${
-          state === 'error' ? 'btn-danger' : 'btn-outline-light'
+          state === 'error' || state === 'conflict' ? 'btn-danger' : 'btn-outline-light'
         }`}
         style={{ width: 36, height: 31 }}
         disabled={saving || !dirty}

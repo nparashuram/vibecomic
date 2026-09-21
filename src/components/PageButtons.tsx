@@ -4,6 +4,7 @@ import { cb } from '../ai/actions';
 import type { ComicPage } from '../types/comic';
 import { usePointerDrag } from '../utils/drag';
 import { moved, slotAt } from '../utils/reorder';
+import ConflictDot from './ConflictDot';
 
 /** Pixels a press must move before it is a drag; less, and it is a click that selects the page. */
 const DRAG_SLOP_PX = 5;
@@ -20,6 +21,8 @@ interface ButtonProps {
   dragging: boolean;
   /** False for the cover, which stays first. */
   movable: boolean;
+  /** True when something on this page clashes with changes made elsewhere. */
+  conflicted: boolean;
   buttonRef: Ref<HTMLButtonElement>;
   reorder: {
     begin: () => void;
@@ -38,6 +41,7 @@ function PageButton({
   order,
   dragging,
   movable,
+  conflicted,
   buttonRef,
   reorder,
 }: ButtonProps) {
@@ -65,7 +69,7 @@ function PageButton({
     <button
       ref={buttonRef}
       title={page.title || undefined}
-      className={`btn btn-sm ${selected ? 'btn-dark' : 'btn-outline-secondary'} ${className}${dragging ? ' opacity-50' : ''}`}
+      className={`btn btn-sm position-relative ${selected ? 'btn-dark' : 'btn-outline-secondary'} ${className}${dragging ? ' opacity-50' : ''}`}
       style={{
         order,
         cursor: dragging ? 'grabbing' : undefined,
@@ -84,6 +88,7 @@ function PageButton({
       }}
     >
       {page.number}
+      {conflicted && <ConflictDot className="position-absolute" style={{ top: 2, right: 2 }} />}
     </button>
   );
 }
@@ -93,6 +98,8 @@ interface Props {
   pageIndex: number;
   className: string;
   axis: 'x' | 'y';
+  /** Pages (by id) with a conflict: their button gets a dot. */
+  conflictPageIds: Set<string>;
 }
 
 /**
@@ -101,7 +108,7 @@ interface Props {
  * DOM while one is dragged (moving it would drop the pointer capture); `order`
  * shows the new sequence.
  */
-export default function PageButtons({ pages, pageIndex, className, axis }: Props) {
+export default function PageButtons({ pages, pageIndex, className, axis, conflictPageIds }: Props) {
   const [drag, setDrag] = useState<{ id: string; over: number } | null>(null);
   const buttons = useRef(new Map<string, HTMLElement>());
   const midpoints = useRef<Array<{ id: string; mid: number }>>([]);
@@ -151,6 +158,7 @@ export default function PageButtons({ pages, pageIndex, className, axis }: Props
       order={shown.indexOf(page)}
       dragging={drag?.id === page.id}
       movable={index > 0}
+      conflicted={conflictPageIds.has(page.id)}
       buttonRef={(element) => {
         if (element) buttons.current.set(page.id, element);
         else buttons.current.delete(page.id);

@@ -420,6 +420,43 @@ mutation marks the project dirty (`markDirty`, called from `updateProject` and
   stamped. Edits made while the write is in flight keep the project dirty for
   the next round; a failed write keeps it dirty too, shows an error toast and
   turns the button red.
+- **Two systems, one file (optimistic concurrency).** Drive keeps a `version`
+  counter on every file (metadata, not a field of `project.json`; the schema is
+  unchanged). The saver remembers, in memory, the **base** (the copy it loaded or
+  last wrote) and the Drive version of it; `driveRest.saveProjectJson` reads the
+  current version on the request that already finds the file and refuses to
+  write (`ProjectChangedError`) if it moved. Then, before pushing, the saver
+  **pulls** the newer copy and does a three-way merge of base, ours and theirs
+  (`src/state/merge.ts`, a pure function shared with the CLI). Everything has an
+  id, so changes to different things, or to different fields of one thing,
+  combine; the merged project is written on top of their version, and the merge
+  repeats (up to three times) if yet another save lands meanwhile. There is no
+  polling and no live update: it happens only when saving. Drive cannot make the
+  check and the write atomic, so a save landing in the milliseconds between them
+  can still slip through.
+- **What is a conflict:** the same field of the same thing changed differently on
+  both sides; a thing deleted on one side and changed on the other; both sides
+  reordering the same list (the pages, a layer stack) differently; or panel layouts
+  that are each valid but do not tile the page once combined. Nothing is written
+  for a conflict. The merged project (ours wherever there is a conflict) becomes
+  the open project and the base becomes theirs, and saving waits until every
+  conflict is settled (autosave pauses; `storage.save()` returns
+  `{ ok: false, error }` naming them; closing the project is refused).
+- **Where conflicts show (browser):** a red **dot** on the page number of a page
+  that holds one (also on the Pages, Characters, Scenes or Outline tab), the Save
+  button turns red, and a **conflict footer** (`ConflictBar`) appears under the
+  editor. It shows one conflict at a time (‹ › to move between them), takes the
+  editor to its tab and page, and offers **Base**, **Ours** and **Theirs**: each
+  shows that version's text and, for a conflict on a page, a small preview of the
+  page as it would look with that version (the merged project with that one
+  conflict settled that way). A **Keep** menu picks Ours, Theirs or Base and
+  **Resolve** applies it; when the last one is resolved the project is saved by
+  itself.
+- **CLI:** each command loads the project with its Drive version, changes it and
+  saves; on a version mismatch it merges too. With no conflict it writes the
+  merged project; on a conflict it writes nothing and fails with an error that
+  lists each conflict (what you changed, what they changed, and what it was
+  before) and says to fetch the project again and apply the change again.
 - **Flush points:** closing a project and disconnecting save first; closing
   stays on the project if saving fails.
 - **Unload:** while dirty, the browser asks for confirmation before the tab
@@ -530,7 +567,8 @@ it's drawn comic content, it's custom CSS.
   (the page's token, the GIS popup flow, and the two above bound together),
   `projectStore.ts` (load, validate and normalize a project).
 - `src/state/` — project validation/creation/normalization (`project.ts`),
-  panel layout geometry (`layout.ts`) and `useProjectSaver`.
+  panel layout geometry (`layout.ts`), the three-way project merge used to
+  combine two systems' saves (`merge.ts`) and `useProjectSaver`.
 - `src/types/comic.ts` — the data model; `src/utils/` — small shared helpers
   (`driveUrl.ts` builds and parses Drive URLs, `geometry.ts`, `drag.ts`, ...).
 - `*.test.ts` files sit next to the code they test (`npm test`).

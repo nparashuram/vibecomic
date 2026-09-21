@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { cb } from '../ai/actions';
 import type { SaveState } from '../state/useProjectSaver';
+import ConflictDot from './ConflictDot';
 import DropdownMenu, { DropdownItem } from './DropdownMenu';
 import { EDITOR_TABS } from './editorTabs';
 import type { EditorTab } from './editorTabs';
@@ -12,11 +13,20 @@ interface Props {
   onTabChange: (tab: EditorTab) => void;
   saveState: SaveState;
   dirty: boolean;
+  /** Tabs that hold a conflict with changes made elsewhere. */
+  conflictTabs: Set<EditorTab>;
 }
 
 type OpenMenu = 'main' | 'tabs' | null;
 
-export default function EditorNavbar({ title, tab, onTabChange, saveState, dirty }: Props) {
+export default function EditorNavbar({
+  title,
+  tab,
+  onTabChange,
+  saveState,
+  dirty,
+  conflictTabs,
+}: Props) {
   const [openMenu, setOpenMenu] = useState<OpenMenu>(null);
   const menuProps = (menu: Exclude<OpenMenu, null>) => ({
     open: openMenu === menu,
@@ -42,12 +52,18 @@ export default function EditorNavbar({ title, tab, onTabChange, saveState, dirty
       <DropdownMenu
         {...menuProps('tabs')}
         align="end"
-        toggle={EDITOR_TABS.find((t) => t.id === tab)?.label}
+        toggle={
+          <>
+            {EDITOR_TABS.find((t) => t.id === tab)?.label}
+            {conflictTabs.size > 0 && <ConflictDot className="ms-1" />}
+          </>
+        }
         toggleClassName="btn btn-outline-light btn-sm dropdown-toggle"
       >
         {EDITOR_TABS.map((t) => (
           <DropdownItem key={t.id} active={t.id === tab} onClick={() => onTabChange(t.id)}>
             {t.label}
+            {conflictTabs.has(t.id) && <ConflictDot className="ms-2" />}
           </DropdownItem>
         ))}
       </DropdownMenu>
