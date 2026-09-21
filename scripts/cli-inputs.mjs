@@ -120,6 +120,11 @@ export const INPUTS = {
     pageIndex: { type: 'number', optional: true, example: '2' },
   },
 
+  'page.move': {
+    from: { type: 'number', example: '3' },
+    to: { type: 'number', example: '1' },
+  },
+
   'panels.list': { pageIndex: { type: 'number', optional: true, example: '0' } },
   'panels.get': { panelId: PANEL_ID },
   'panels.size': { panelId: PANEL_ID },

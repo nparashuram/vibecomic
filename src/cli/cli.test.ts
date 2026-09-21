@@ -514,3 +514,58 @@ test('pages and panels have prompts, through the CLI', async () => {
   // Everything survives a reload from Drive, as a fresh process reads it
   assert.equal((await run('page', 'current')).json().panels[0].prompt, '');
 });
+
+test('pages can be reordered from the CLI, and the cover stays first', async () => {
+  const { run, login, google } = setup();
+  await login();
+  const { id: folderId } = (await run('storage', 'createProject', 'Order')).json();
+  for (const title of ['A', 'B', 'C']) await run('page', 'add', '--title', title);
+  const order = async () => {
+    const pages = google.projectIn(folderId).pages as Array<{ title: string; number: number }>;
+    return pages.map((p) => `${p.number}:${p.title}`).join(' ');
+  };
+  assert.equal(await order(), '0:Cover 1:A 2:B 3:C');
+
+  // Move C to the front (after the cover): everything renumbers, and the page on screen stays B.
+  await run('page', 'select', '2');
+  const moved = await run('page', 'move', '3', '1');
+  assert.equal(moved.code, 0, moved.err);
+  assert.equal(moved.json().title, 'C');
+  assert.equal(moved.json().number, 1);
+  assert.equal(await order(), '0:Cover 1:C 2:A 3:B');
+  const shown = (await run('page', 'current')).json();
+  assert.equal(shown.title, 'B');
+  assert.equal(shown.number, 3);
+
+  // Moving the page that is on screen: it stays on screen
+  await run('page', 'select', '1');
+  await run('page', 'move', '1', '3');
+  assert.equal(await order(), '0:Cover 1:A 2:B 3:C');
+  assert.equal((await run('page', 'current')).json().title, 'C');
+  assert.equal((await run('page', 'current')).json().number, 3);
+
+  // A neighbour swap, and a move to the same place changes nothing
+  await run('page', 'move', '1', '2');
+  assert.equal(await order(), '0:Cover 1:B 2:A 3:C');
+  const same = await run('page', 'move', '2', '2');
+  assert.equal(same.code, 0);
+  assert.equal(await order(), '0:Cover 1:B 2:A 3:C');
+
+  // Content and prompts travel with the page
+  await run('page', 'update', '2', '--prompt', 'A is the chase');
+  await run('page', 'move', '2', '1');
+  assert.equal((await run('page', 'select', '1')).json().prompt, 'A is the chase');
+
+  // Mistakes change nothing
+  const before = await order();
+  assert.match((await run('page', 'move', '0', '2')).err, /cover \(page 0\) stays first/);
+  assert.match((await run('page', 'move', '2', '0')).err, /cover \(page 0\) stays first/);
+  assert.match((await run('page', 'move', '9', '1')).err, /Page 9 not found/);
+  assert.match((await run('page', 'move', '1', '9')).err, /Page 9 not found/);
+  assert.match((await run('page', 'move', '-1', '1')).err, /Page -1 not found/);
+  assert.match((await run('page', 'move', '1.5', '2')).err, /Page 1.5 not found/);
+  assert.match((await run('page', 'move', 'first', '2')).err, /"first" is not a number/);
+  assert.match((await run('page', 'move', '1')).err, /Missing to/);
+  assert.equal(await order(), before);
+  assert.match((await run('help')).out, /page move\s+Move a page to a new position/);
+});

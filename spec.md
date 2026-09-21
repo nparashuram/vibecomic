@@ -68,7 +68,16 @@ Google Drive API ◄── OAuth token (page memory) ── saveProjectJson()
    rail on the left for desktop with a `+` button pinned to its bottom, and a
    horizontally scrolling page-number footer on mobile with the `+` button
    at its far right. Page numbers are plain (`0`, `1`, `2`); `+` calls
-   `ComicBuilder.page.add()` and shows the new page.
+   `ComicBuilder.page.add()` and shows the new page. **Pages are reordered by
+   dragging their number** along the rail (`PageButtons`): a press that moves
+   less than 5px is still a click that selects the page; a drag shows the new
+   sequence live (the buttons stay in the DOM and CSS `order` moves them, like
+   the layer rows) and calls `page.move` on release. The cover (page 0) does not
+   drag and nothing can land before it. The page on screen stays the same page.
+   A finger drags on the side rail (which sets `touch-action: none` on its
+   buttons) but scrolls the footer, so for touch and for the keyboard there are
+   also **Move page earlier / later** buttons (arrows) next to the page title
+   above the sheet (hidden on the cover).
 
    The selected page is the **only view**: a **page sheet** at the real
    aspect ratio of `metadata.pageSize` (the largest rectangle of that ratio
@@ -269,7 +278,9 @@ Namespaces:
 - `page` — `count()`, `select(i)`, `current()`, `add(input?)` (append a page
   with one full-page panel and show it; `input` is `{ title?, prompt? }`),
   `update(patch, pageIndex?)` (`{ title?, prompt? }` of the current or given
-  page), `openPreview()`, `closePreview()`
+  page), `move(from, to)` (reorder: the pages in between shift, every page is
+  renumbered, the page on screen stays the same page; the cover, page 0, stays
+  first, so both positions must be 1 or more), `openPreview()`, `closePreview()`
 - `panels` — `list(pageIndex?)`, `get(panelId)`, `size(panelId)` (inches and
   aspect ratio and the pixel size to generate at, for sizing artwork),
   `splitAcross(axis, position, pageIndex?)` (a line across the whole page,

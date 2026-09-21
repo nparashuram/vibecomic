@@ -5,6 +5,7 @@ import { formatPageLabel } from '../types/comic';
 import { usePersistentChoice } from '../utils/usePersistentChoice';
 import { useMediaQuery } from '../utils/useViewport';
 import InspectorPane from './InspectorPane';
+import PageButtons from './PageButtons';
 import PageDetails from './PageDetails';
 import PageSheet from './PageSheet';
 import { SNAPS } from './sheetSnaps';
@@ -17,23 +18,6 @@ interface Props {
   pageIndex: number;
   pageSize: PageSize;
   media: MediaItem[];
-}
-
-function PageButtons({
-  pages,
-  pageIndex,
-  className,
-}: Pick<Props, 'pages' | 'pageIndex'> & { className: string }) {
-  return pages.map((page, index) => (
-    <button
-      key={page.id}
-      title={page.title}
-      className={`btn btn-sm ${index === pageIndex ? 'btn-dark' : 'btn-outline-secondary'} ${className}`}
-      onClick={() => cb().page.select(index)}
-    >
-      {page.number}
-    </button>
-  ));
 }
 
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? '' : 's'}`;
@@ -106,7 +90,7 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
             className="d-flex flex-column flex-grow-1"
             style={{ minHeight: 0, overflowY: 'auto' }}
           >
-            <PageButtons pages={pages} pageIndex={pageIndex} className="mx-2 mb-1 px-0" />
+            <PageButtons pages={pages} pageIndex={pageIndex} className="mx-2 mb-1 px-0" axis="y" />
           </div>
           <AddPageButton className="mx-2 mt-2 px-0" />
         </div>
@@ -121,7 +105,36 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
                 className="flex-grow-1 d-flex flex-column"
                 style={{ minWidth: 0, minHeight: 0 }}
               >
-                <h2 className="h6 px-3 pt-2 mb-0 text-truncate">{formatPageLabel(page)}</h2>
+                <div className="d-flex align-items-center gap-2 px-3 pt-2">
+                  <h2 className="h6 mb-0 text-truncate flex-grow-1">{formatPageLabel(page)}</h2>
+                  {/* The keyboard and touch way to reorder: the cover, page 0, stays first. */}
+                  {pageIndex > 0 && (
+                    <div
+                      className="btn-group btn-group-sm flex-shrink-0"
+                      role="group"
+                      aria-label="Move page"
+                    >
+                      <button
+                        className="btn btn-outline-secondary"
+                        title="Move page earlier"
+                        aria-label="Move page earlier"
+                        disabled={pageIndex <= 1}
+                        onClick={() => cb().page.move(pageIndex, pageIndex - 1)}
+                      >
+                        {wide ? '↑' : '←'}
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary"
+                        title="Move page later"
+                        aria-label="Move page later"
+                        disabled={pageIndex >= pages.length - 1}
+                        onClick={() => cb().page.move(pageIndex, pageIndex + 1)}
+                      >
+                        {wide ? '↓' : '→'}
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <PageSheet
                   page={page}
                   pageSize={pageSize}
@@ -165,7 +178,12 @@ export default function PagesTab({ pages, pageIndex, pageSize, media }: Props) {
 
       <div className="d-md-none d-flex align-items-center gap-2 border-top bg-white py-2 px-3">
         <div className="d-flex flex-grow-1 gap-2" style={{ minWidth: 0, overflowX: 'auto' }}>
-          <PageButtons pages={pages} pageIndex={pageIndex} className="px-3 flex-shrink-0" />
+          <PageButtons
+            pages={pages}
+            pageIndex={pageIndex}
+            className="px-3 flex-shrink-0"
+            axis="x"
+          />
         </div>
         <AddPageButton className="px-3 flex-shrink-0" />
       </div>

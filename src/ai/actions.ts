@@ -236,7 +236,7 @@ export function createComicBuilder(deps: ComicBuilderDeps) {
     },
 
     /**
-     * Pages: navigation, preview, creating pages and their prompts.
+     * Pages: navigation, preview, creating, reordering and their prompts.
      *
      * A page has a prompt: the intent of the whole page (what happens on it, its
      * mood and pacing), set with add or update. It is the first part of the
@@ -354,6 +354,43 @@ export function createComicBuilder(deps: ComicBuilderDeps) {
             )
           )
         );
+      },
+
+      /**
+       * Move a page to a new position, e.g. move(3, 1) makes page 3 the first
+       * page after the cover. The pages in between shift by one and every page is
+       * renumbered (the number is the position). The cover (page 0) stays first:
+       * only pages 1 and up can be moved, and only to positions 1 and up. The
+       * page shown stays the same page, wherever it ends up.
+       * @param from - 0-based position of the page to move (1 or more).
+       * @param to - 0-based position it should end up at (1 or more, at most the last page).
+       * @returns A deep-cloned snapshot of the moved ComicPage, with its new number. Throws when a position is not a page, or is the cover.
+       */
+      move: (from: number, to: number): ComicPage => {
+        const project = requireProject(deps);
+        const count = project.pages.length;
+        for (const position of [from, to]) {
+          if (!Number.isInteger(position) || position < 0 || position >= count) {
+            throw new Error(`Page ${position} not found.`);
+          }
+        }
+        if (from === 0 || to === 0) {
+          throw new Error('The cover (page 0) stays first: only pages 1 and up can be moved.');
+        }
+        if (from === to) return snapshot(project.pages[from]);
+
+        const shownId = project.pages[deps.getPageIndex()]?.id;
+        const page = mutate(deps, (p) => {
+          const [moved] = p.pages.splice(from, 1);
+          p.pages.splice(to, 0, moved);
+          p.pages.forEach((entry, index) => {
+            entry.number = index;
+          });
+          return moved;
+        });
+        const shown = requireProject(deps).pages.findIndex((entry) => entry.id === shownId);
+        if (shown >= 0) deps.setPageIndex(shown);
+        return snapshot(page);
       },
 
       /**

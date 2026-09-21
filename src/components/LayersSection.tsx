@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { cb } from '../ai/actions';
+import { moved, slotAt } from '../utils/reorder';
 import type { MediaItem, Panel } from '../types/comic';
 import LayerRow from './LayerRow';
 import type { Selection } from './selection';
@@ -11,14 +12,6 @@ interface Props {
   selection: Selection;
   onSelect: (selection: Selection) => void;
   expansion: Expansion;
-}
-
-/** Moves the item with `id` to position `to` in the list. */
-function moved<T extends { id: string }>(list: T[], id: string, to: number): T[] {
-  const item = list.find((entry) => entry.id === id)!;
-  const rest = list.filter((entry) => entry !== item);
-  rest.splice(to, 0, item);
-  return rest;
 }
 
 /** The panel's layers, top of the stack first. Drag a row's ≡ handle to reorder. */
@@ -42,7 +35,13 @@ export default function LayersSection({ panel, media, selection, onSelect, expan
 
   function update(id: string, clientY: number) {
     const others = midpoints.current.filter((row) => row.id !== id);
-    setDrag({ id, over: others.filter((row) => row.mid < clientY).length });
+    setDrag({
+      id,
+      over: slotAt(
+        others.map((row) => row.mid),
+        clientY
+      ),
+    });
   }
 
   function commit() {
